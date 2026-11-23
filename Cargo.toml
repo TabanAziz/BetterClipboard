@@ -1,0 +1,65 @@
+[package]
+name = "better-clipboard"
+description = "A fast, native clipboard history for Windows 11"
+version = "0.1.0"
+authors = ["TabanAziz"]
+license = "MIT"
+repository = "https://github.com/TabanAziz/BetterClipboard"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.87"
+publish = false
+
+[[bin]]
+name = "BetterClipboard"
+path = "src/main.rs"
+
+[lib]
+name = "bcb"
+path = "src/lib.rs"
+
+[dependencies]
+png = "0.18"
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+  "Win32_Foundation",
+  "Win32_Globalization",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_Performance",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_SystemInformation",
+  "Win32_System_SystemServices",
+  "Win32_System_Time",
+  "Win32_System_Threading",
+  "Win32_UI_Controls",
+  "Win32_UI_Controls_Dialogs",
+  "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[build-dependencies]
+embed-resource = "2.5"
+
+[profile.release]
+panic = "abort"
+strip = "symbols"
+lto = "fat"
+codegen-units = 1

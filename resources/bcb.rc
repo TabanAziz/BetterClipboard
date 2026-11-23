@@ -1,0 +1,32 @@
+#pragma code_page(65001)
+#define RT_MANIFEST 24
+
+1 ICON "../assets/bcb.ico"
+2 ICON "../assets/bcb-paused.ico"
+1 RT_MANIFEST "bcb.manifest"
+
+1 VERSIONINFO
+ PRODUCTVERSION 0,1,0,0
+ FILEVERSION 0,1,0,0
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+BEGIN
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "ProductName", "BetterClipboard"
+      VALUE "FileDescription", "BetterClipboard"
+      VALUE "InternalName", "BetterClipboard"
+      VALUE "OriginalFilename", "BetterClipboard.exe"
+      VALUE "ProductVersion", "0.1.0"
+      VALUE "FileVersion", "0.1.0"
+      VALUE "CompanyName", "TabanAziz"
+      VALUE "LegalCopyright", "MIT License"
+    END
+  END
+END
