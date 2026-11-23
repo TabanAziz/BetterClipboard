@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --release --locked --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --release --locked
+      - name: System clipboard tests
+        run: cargo test --release --locked --test system_clipboard -- --ignored --test-threads=1
+      - name: Release build
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BetterClipboard
+          path: target/release/BetterClipboard.exe
