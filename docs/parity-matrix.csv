@@ -1,0 +1,39 @@
+ID,WindowsBuild,Screen,Action,Expected,Backend,Implementation,Test,Status,Evidence
+P01,10.0.26200.9974,Panel,Press Win+V,Clipboard panel opens near the text cursor,blocked-by-platform,Win+V belongs to Explorer; default shortcut is Win+Alt+V. Optional takeover via DisabledHotkeys (needs sign-out),Manual,blocked-by-platform,RegisterHotKey(MOD_WIN|V) fails while Explorer owns Win+V; takeover path implemented but not exercised on the reference PC
+P02,10.0.26200.9974,Panel,Press the BetterClipboard shortcut,Panel opens near the caret (else near the mouse) and takes keyboard focus,native,app.rs show_popup + popup.rs show,E2E e2e.ps1 (real hotkey),tested,Foreground switched to BetterClipboard.Panel after Win+Alt+V
+P03,10.0.26200.9974,Panel,Layout,Grip; close; tab row (favourites/emoji/GIF/kaomoji/symbols/clipboard); Clipboard title with Clear all; entry cards with See more (...),native,popup.rs paint,Screenshot,implemented,assets/screenshots/*.png; compared with Microsoft's published panel images; no pixel-exact copy
+P04,10.0.26200.9974,Panel,Drag the grip,Panel moves,native,WM_NCHITTEST HTCAPTION on the grip,Manual,implemented,Not exercised by automated tests
+P05,10.0.26200.9974,Panel,Emoji / GIF / kaomoji / symbols tabs,Shows those pages,Windows function via documented shortcut,Opens the Windows emoji panel (Win+.) in the previous app,Manual,implemented,The pages themselves are Windows UI; BetterClipboard does not draw them
+P06,10.0.26200.9974,Panel,Up/Down then Enter,Chosen entry is pasted into the previous app,native,paste.rs (clipboard write then focus then Ctrl+V),E2E e2e.ps1,tested,Unicode text pasted into a RichTextBox target
+P07,10.0.26200.9974,Panel,Click an entry,Entry is pasted into the previous app,native,popup.rs on_button_up + app.rs choose,Manual,implemented,Same code path as P06
+P08,10.0.26200.9974,Panel,Escape,Panel closes and focus returns to the previous app,native,Action::Hide restores the target window,Manual,implemented,Focus went elsewhere in an early test; fixed afterwards and not re-run with real key input
+P09,10.0.26200.9974,Panel,Click outside,Panel closes,native,WM_ACTIVATE inactive hides,Manual,implemented,
+P10,10.0.26200.9974,Panel,See more (...),Reveals pin and delete for the entry,native,popup.rs expanded entry,flow2.ps1 click test,tested,Screenshot scene-dark-more
+P11,10.0.26200.9974,Panel,Pin / Unpin,Pinned entries survive Clear all and restarts,native,History::set_pinned + store.rs,unit model::tests + flow3.ps1 restart,tested,Only the pinned entry was present after restart
+P12,10.0.26200.9974,Panel,Delete one entry,Entry disappears from panel and saved data,native,History::remove + save,unit model::tests,tested,
+P13,10.0.26200.9974,Panel,Clear all,Removes all entries except pinned,native,History::clear_unpinned,unit model::tests,tested,
+P14,10.0.26200.9974,Panel,History switched off,Shows Let's get started and Turn on,native,popup.rs empty state + Action::Primary,Screenshot empty-light,tested,Turning on via the button is the same code path as Settings
+P15,10.0.26200.9974,Panel,Light / dark theme,Follows the Windows app theme; can be forced,native,theme.rs + WM_SETTINGCHANGE,Screenshots light and dark,tested,
+P16,10.0.26200.9974,Panel,Display scaling 125/150/200%,Panel scales with the monitor DPI,native,PerMonitorV2 + GetDpiForMonitor + WM_DPICHANGED,Manual,implemented,Only 100% available on the reference PC; other scales not verified
+P17,10.0.26200.9974,Panel,Screen reader,Selected entry is announced,native (partial),Window title + EVENT_OBJECT_NAMECHANGE,Manual,implemented,No UI Automation provider; see limitations
+P18,10.0.26200.9974,Capture,Copy text,Entry appears with text,native,AddClipboardFormatListener + clipboard thread,system_clipboard::captures_text_html_images_and_files,tested,
+P19,10.0.26200.9974,Capture,Copy rich text (HTML/RTF),Formatting kept when pasted,native,HTML Format + Rich Text Format stored and written back,system_clipboard::captures + writes_entries_back,tested,
+P20,10.0.26200.9974,Capture,Copy a picture or screenshot,Entry shows a preview; pasting gives the picture,native,PNG / CF_DIBV5 / CF_DIB decode; written back as CF_DIB + PNG,system_clipboard tests (incl. 4K screenshot),tested,
+P21,10.0.26200.9974,Capture,Copy files in Explorer,Entry lists files; pasting gives the files,native (extension),CF_HDROP + Preferred DropEffect,system_clipboard tests,tested,Windows' panel does not list files; this is an addition
+P22,10.0.26200.9974,Capture,Limit of 25 entries,Oldest unpinned entries drop out,native,Limits.max_items (configurable),unit model::tests,tested,
+P23,10.0.26200.9974,Capture,4 MB per entry,Larger entries are not kept,native (differs for pictures),Text/HTML/RTF/files 4 MB; pictures counted compressed with a 32 MB allowance,system_clipboard::respects_privacy_markers_limits_and_pause,tested,Deliberate difference so full-screen screenshots show up
+P24,10.0.26200.9974,Capture,Restart,Unpinned entries are cleared; pinned are kept,native,store.rs (DPAPI),flow3.ps1,tested,
+P25,10.0.26200.9974,Capture,App marks data as private,Not recorded,native,ExcludeClipboardContentFromMonitorProcessing / CanIncludeInClipboardHistory / Clipboard Viewer Ignore,system_clipboard::respects_privacy_markers,tested,
+P26,10.0.26200.9974,Capture,Normal Ctrl+C / Ctrl+V,Unchanged,native,Listener only reads; writes happen only when the user chooses an entry,system_clipboard tests + e2e,tested,
+P27,10.0.26200.9974,Capture,Copy on an Android phone with Phone Link cross-device copy,Entry appears on the PC,Windows function (Phone Link writes the PC clipboard),Owner process PhoneExperienceHost.exe -> marked From your phone + Phone filter,scene.ps1 with a renamed host process,tested (simulated),Not verified with a real phone in this session
+P28,10.0.26200.9974,Settings,Clipboard history on/off,Mirrors Settings > System > Clipboard,native,settings_window.rs; shows the Windows switch state read-only,settings-test.ps1,tested,
+P29,10.0.26200.9974,Settings,Open Windows clipboard settings,Opens ms-settings:clipboard,legitimate system page,ShellExecute ms-settings:clipboard,Manual,implemented,
+P30,10.0.26200.9974,Settings,Sync across devices (Microsoft account),Syncs history to other PCs,blocked-by-platform,No public API; button opens the Windows page,None,blocked-by-platform,Windows' own sync keeps working next to BetterClipboard
+P31,10.0.26200.9974,Settings,Group policy AllowClipboardHistory=0,History disabled,native,system::history_blocked_by_policy,Manual,implemented,Policy not set on the reference PC
+P32,10.0.26200.9974,Paste,Target runs as administrator,Paste is not possible from a normal app,native,Integrity check; notification asks for Ctrl+V,Manual,implemented,No elevation and no workaround by design
+P33,10.0.26200.9974,Extension,Search,Filters entries while typing,native,History::search,unit model::tests + bench search,tested,
+P34,10.0.26200.9974,Extension,Filters All/Text/Images/Files/Phone/Pinned,Show matching entries,native,Filter::accepts,flow2.ps1,tested,
+P35,10.0.26200.9974,Extension,Save image as,Writes PNG or BMP,native,GetSaveFileNameW + storage of PNG bytes,flow2.ps1 (real dialog),tested,
+P36,10.0.26200.9974,Extension,Snippets,Pinned text entries created by hand,native,settings_window.rs open_snippet,Manual,implemented,
+P37,10.0.26200.9974,Extension,Pause / excluded apps / retention,No recording while paused; excluded owners skipped; old entries removed,native,CaptureConfig + prune_older_than,system_clipboard + unit,tested,
+P38,10.0.26200.9974,Install,Install / uninstall per user,Start menu entry; Installed apps entry; sign-in start; clean removal,native,install.rs,install test (see test-plan),tested,
