@@ -65,7 +65,7 @@ Same PC, same script (`tools\bench.ps1 -Runs 30 -IdleSeconds 300`), 24 November 
 
 Notes:
 
-- The start-up p95 and p99 of 0.1.3 come from three slower runs (44 to 69 ms) while other programs were busy; the median is lower than before. All values stay within the 150 ms budget.
+- The start-up p95 and p99 of 0.1.3 come from four slower runs (46 to 69 ms) while other programs were busy; the median is lower than before. All values stay within the 150 ms budget.
 - Memory is higher because 0.1.3 renders the colour emoji 1.5 s after start (Direct2D, DirectWrite and the emoji font stay loaded, about 0.8 MB of emoji bitmaps). That is what makes the emoji page open without delay.
 - The installed copy on the same PC, used normally with Win+V, was sampled twice six minutes apart: CPU time grew by 15 ms, working set stayed at 32 MB, GDI objects at 23 and USER objects at 19. No leak was visible.
 
