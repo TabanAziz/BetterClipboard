@@ -21,7 +21,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 use crate::clipboard::{self, CaptureConfig, Command, Event, Service, Skip};
 use crate::model::{Added, Content, History, Item, Limits, Origin};
 use crate::paste;
-use crate::settings::{Hotkey, Settings};
+use crate::settings::{Hotkey, Settings, Theme};
 use crate::store;
 use crate::system;
 use crate::tray::{self, Tray};
@@ -784,15 +784,32 @@ impl App {
             self.register_hotkey();
         }
         if previous.theme != self.settings.theme {
-            self.popup.set_theme(self.settings.theme);
+            self.refresh_theme();
         }
-        if let Err(error) = self.settings.save(&self.settings_path) {
-            self.tray.notify("Settings were not saved", &error.to_string());
-        }
+        self.save_settings();
         self.prune();
         self.schedule_save();
         self.refresh_tray();
         self.redraw_popup();
+    }
+
+    pub fn set_theme(&mut self, theme: Theme) {
+        if self.settings.theme != theme {
+            self.settings.theme = theme;
+            self.refresh_theme();
+            self.save_settings();
+        }
+    }
+
+    fn refresh_theme(&mut self) {
+        self.popup.set_theme(self.settings.theme);
+        crate::ui::dialogs::refresh_snippet_theme(self.settings.theme);
+    }
+
+    fn save_settings(&self) {
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.tray.notify("Settings were not saved", &error.to_string());
+        }
     }
 
     pub fn add_snippet(&mut self, text: String) {
@@ -1132,12 +1149,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             }
             0
         }
-        wm::WM_SETTINGCHANGE => {
-            // Light/dark switch or accent colour change.
-            with(|app| {
-                let theme = app.settings.theme;
-                app.popup.set_theme(theme);
-            });
+        wm::WM_SETTINGCHANGE | wm::WM_SYSCOLORCHANGE => {
+            with(App::refresh_theme);
             0
         }
         wm::WM_QUERYENDSESSION => 1,

@@ -36,7 +36,8 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 
 | | |
 | --- | --- |
-| **Familiar panel** | Grip, tab row, "Clipboard" with "Clear all", entry cards with "See more" (...) for pin and delete, "Let's get started / Turn on" when history is off. Light and dark like your Windows theme. |
+| **Familiar panel** | Grip, tab row, "Clipboard" with "Clear all", entry cards with "See more" (...) for pin and delete, "Let's get started / Turn on" when history is off. |
+| **Themes** | Follow Windows, choose Light or Dark, or pick one of the six BetterExplorer themes. |
 | **Paste where you were** | Pick an entry with the mouse or arrows and Enter: it goes into the app you came from. Shift+Enter pastes plain text, Ctrl+Enter only copies. |
 | **Pictures** | Previews for screenshots and copied images, "Save image as" (PNG or BMP, Ctrl+S) and "Open image". Full-screen 4K screenshots are kept. |
 | **Your phone** | With Phone Link's cross-device copy and paste, what you copy on your Android phone lands on the PC clipboard. BetterClipboard marks those entries with a phone icon ("From your phone") and has a Phone filter. |
@@ -72,7 +73,7 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 
 ## Install
 
-1. Download **`BetterClipboard-Setup-0.1.3.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
+1. Download **`BetterClipboard-Setup-0.1.4.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
 2. Run it and pick how your clipboard history should open:
    - **With Win+V (recommended):** BetterClipboard replaces the Windows clipboard panel. Explorer restarts once so it works right away.
    - **Keep Win+V for Windows:** BetterClipboard opens with Win+Alt+V.
@@ -92,6 +93,7 @@ Prefer no installer? The release also has a portable zip; run `BetterClipboard.e
 
 - **Win+V** (if you chose it in setup) or **Win+Alt+V** opens the history. Clicking the tray icon works too.
 - Switch between the two any time in Settings > "Open with Win+V", or with `--use-win-v` / `--windows-win-v`. Explorer restarts once, no sign-out needed.
+- Open Settings > Appearance and startup > App theme to choose System, Light, Dark, Deep Space, Paper White, Candy Rush, Frost, Eclipse or Cyber Grid. Choose a preview with the mouse or use the arrow keys when the picker has focus.
 - Right-click an entry or press the Menu key for everything else: paste as plain text, copy only, pin, delete, save or open an image, show a file in Explorer.
 - To get your phone's clipboard: in Phone Link, turn on "Cross-device copy and paste" (Settings > Features). It works with supported Android phones.
 

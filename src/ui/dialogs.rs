@@ -5,7 +5,9 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 use windows_sys::Win32::Foundation::{FILETIME, HWND, LPARAM, LRESULT, RECT, SYSTEMTIME, WPARAM};
-use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+use windows_sys::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_COLOR_DEFAULT, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
@@ -13,6 +15,8 @@ use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 
+use super::gfx::cr;
+use super::theme::{self, Palette};
 use crate::app;
 use crate::settings::Theme;
 use crate::util::{self, from_wide, wide};
@@ -22,8 +26,6 @@ thread_local! {
     /// The snippet window, which needs IsDialogMessage for Tab navigation.
     pub static SNIPPET_WINDOW: Cell<isize> = const { Cell::new(0) };
 }
-
-const BG_BRUSH_DARK: u32 = 0x202020;
 
 const ID_SAVE: i32 = 1; // IDOK
 const ID_CANCEL: i32 = 2; // IDCANCEL
@@ -59,9 +61,15 @@ pub fn ui_font(dpi: u32, scale_size: f32, weight: i32) -> HFONT {
     }
 }
 
-pub fn set_dark_title(window: HWND, dark: bool) {
-    let value: i32 = dark as i32;
-    unsafe { DwmSetWindowAttribute(window, 20, &value as *const i32 as _, 4) };
+pub fn set_theme_title(window: HWND, palette: Palette) {
+    let dark = palette.dark as i32;
+    let caption = if palette.motifs { cr(palette.header) } else { DWMWA_COLOR_DEFAULT };
+    let text = if palette.motifs { cr(palette.text) } else { DWMWA_COLOR_DEFAULT };
+    unsafe {
+        DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, (&dark as *const i32).cast(), 4);
+        DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR as u32, (&caption as *const u32).cast(), 4);
+        DwmSetWindowAttribute(window, DWMWA_TEXT_COLOR as u32, (&text as *const u32).cast(), 4);
+    }
 }
 
 // MAKEINTRESOURCE(1) looks like a dangling pointer to clippy; it is a resource number.
@@ -103,7 +111,32 @@ struct SnippetUi {
     window: HWND,
     font: HFONT,
     brush: HBRUSH,
-    dark: bool,
+    field_brush: HBRUSH,
+    palette: Option<Palette>,
+}
+
+impl SnippetUi {
+    fn set_theme(&mut self, preference: Theme) {
+        let mut palette = theme::palette(preference);
+        set_theme_title(self.window, palette);
+        if !preference.is_custom() && !palette.contrast {
+            // Keep the standard dialog in the original Windows light or dark style.
+            palette.field = palette.background;
+        }
+        self.palette = (preference.is_custom() || palette.dark || palette.contrast).then_some(palette);
+        unsafe {
+            DeleteObject(self.brush);
+            DeleteObject(self.field_brush);
+            self.brush = CreateSolidBrush(cr(palette.background));
+            self.field_brush = CreateSolidBrush(cr(palette.field));
+            RedrawWindow(
+                self.window,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+            );
+        }
+    }
 }
 
 const ID_SNIPPET_TEXT: i32 = 100;
@@ -115,7 +148,6 @@ pub fn open_snippet() {
         return;
     }
     let theme = app::with(|a| a.settings.theme).unwrap_or(Theme::System);
-    let dark = crate::ui::theme::is_dark(theme);
     let class = format!("BetterClipboard.Snippet{}", util::profile());
     register(&class, Some(snippet_proc));
     let window = unsafe {
@@ -137,7 +169,6 @@ pub fn open_snippet() {
     if window.is_null() {
         return;
     }
-    set_dark_title(window, dark);
     let dpi = unsafe { GetDpiForWindow(window) }.max(96);
     let px = |dip: i32| dip * dpi as i32 / 96;
     let font = ui_font(dpi, 1.0, 400);
@@ -181,8 +212,10 @@ pub fn open_snippet() {
             wm::SWP_NOMOVE | wm::SWP_NOZORDER,
         );
     }
-    let brush = unsafe { CreateSolidBrush(crate::ui::gfx::cr(BG_BRUSH_DARK)) };
-    SNIPPET_UI.with(|s| *s.borrow_mut() = Some(SnippetUi { window, font, brush, dark }));
+    let mut ui =
+        SnippetUi { window, font, brush: std::ptr::null_mut(), field_brush: std::ptr::null_mut(), palette: None };
+    ui.set_theme(theme);
+    SNIPPET_UI.with(|s| *s.borrow_mut() = Some(ui));
     SNIPPET_WINDOW.with(|d| d.set(window as isize));
     unsafe {
         wm::ShowWindow(window, wm::SW_SHOWNORMAL);
@@ -191,12 +224,21 @@ pub fn open_snippet() {
     }
 }
 
+pub fn refresh_snippet_theme(theme: Theme) {
+    SNIPPET_UI.with(|s| {
+        if let Some(ui) = s.borrow_mut().as_mut() {
+            ui.set_theme(theme);
+        }
+    });
+}
+
 fn close_snippet() {
     if let Some(ui) = SNIPPET_UI.with(|s| s.borrow_mut().take()) {
         unsafe {
             wm::DestroyWindow(ui.window);
             DeleteObject(ui.font);
             DeleteObject(ui.brush);
+            DeleteObject(ui.field_brush);
         }
     }
     SNIPPET_WINDOW.with(|d| d.set(0));
@@ -221,28 +263,38 @@ unsafe extern "system" fn snippet_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             0
         }
         wm::WM_CTLCOLORSTATIC | wm::WM_CTLCOLOREDIT | wm::WM_CTLCOLORBTN => {
-            let dark = SNIPPET_UI.with(|s| s.borrow().as_ref().filter(|ui| ui.dark).map(|ui| ui.brush));
-            match dark {
-                Some(brush) => {
+            let colors = SNIPPET_UI.with(|s| {
+                let ui = s.try_borrow().ok()?;
+                let ui = ui.as_ref()?;
+                let palette = ui.palette?;
+                let (brush, back) = if msg == wm::WM_CTLCOLOREDIT {
+                    (ui.field_brush, palette.field)
+                } else {
+                    (ui.brush, palette.background)
+                };
+                Some((brush, back, palette.text))
+            });
+            match colors {
+                Some((brush, back, text)) => {
                     let dc = wparam as HDC;
-                    SetTextColor(dc, crate::ui::gfx::cr(0xFFFFFF));
-                    SetBkColor(dc, crate::ui::gfx::cr(BG_BRUSH_DARK));
+                    SetTextColor(dc, cr(text));
+                    SetBkColor(dc, cr(back));
                     brush as LRESULT
                 }
                 None => wm::DefWindowProcW(hwnd, msg, wparam, lparam),
             }
         }
         wm::WM_ERASEBKGND => {
-            let brush = SNIPPET_UI.with(|s| s.borrow().as_ref().filter(|ui| ui.dark).map(|ui| ui.brush));
-            match brush {
-                Some(brush) => {
-                    let mut r: RECT = std::mem::zeroed();
-                    wm::GetClientRect(hwnd, &mut r);
-                    FillRect(wparam as HDC, &r, brush);
-                    1
-                }
-                None => wm::DefWindowProcW(hwnd, msg, wparam, lparam),
-            }
+            let brush = SNIPPET_UI.with(|s| {
+                let ui = s.try_borrow().ok()?;
+                let ui = ui.as_ref()?;
+                ui.palette.map(|_| ui.brush)
+            });
+            let brush = brush.unwrap_or_else(|| GetSysColorBrush(COLOR_BTNFACE));
+            let mut r: RECT = std::mem::zeroed();
+            wm::GetClientRect(hwnd, &mut r);
+            FillRect(wparam as HDC, &r, brush);
+            1
         }
         wm::WM_CLOSE => {
             close_snippet();

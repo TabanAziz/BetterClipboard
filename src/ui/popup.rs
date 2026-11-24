@@ -13,6 +13,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 
 use super::gfx::{self, make_font, mix, Canvas, DT_C, DT_L, DT_MULTI};
 use super::theme::{self, Palette};
+use super::theme_visuals::paint_motif;
 use crate::model::{app_label, Filter, History, Item, Kind, Origin};
 use crate::settings::Theme;
 use crate::util::{self, wide};
@@ -1272,6 +1273,12 @@ impl Popup {
 
         let px = |dip: f32| (dip * self.scale).round() as i32;
         let pxf = |dip: f32| dip * self.scale;
+
+        if p.motifs {
+            c.fill(0, 0, w, px(72.0), p.header);
+            let x = px(232.0);
+            paint_motif(c.hdc, (x, px(35.0), w - x - px(10.0), px(32.0)), self.theme, p);
+        }
 
         // Grip, settings and close, as on the Windows panel.
         c.round_rect((w / 2 - px(16.0)) as f32, pxf(10.0), pxf(32.0), pxf(4.0), pxf(2.0), p.tertiary, 1.0);

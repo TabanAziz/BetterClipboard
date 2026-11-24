@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Settings now previews six BetterExplorer themes alongside System, Light and Dark. The selected theme applies immediately to the clipboard panel and Settings and is kept after a restart.
+
 ## 0.1.3
 
 - Phone items no longer come back to the phone in the common cases. Phone Link sends every change of the PC clipboard to the phone and ignores the "do not process" markers, so BetterClipboard now avoids changing the clipboard for phone items:

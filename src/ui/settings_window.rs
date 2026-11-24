@@ -12,9 +12,10 @@ use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, GetKeyState, SetFocus, VK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 
-use super::dialogs::{self, create_control, message_box, set_dark_title, text_of};
+use super::dialogs::{self, create_control, message_box, set_theme_title, text_of};
 use super::gfx::{self, make_font, Canvas, DT_C, DT_L};
 use super::theme::{self, Palette};
+use super::theme_visuals::paint_motif;
 use crate::app;
 use crate::settings::{Hotkey, Settings, Theme, MAX_ITEMS_LIMIT, MAX_ITEM_MB_LIMIT};
 use crate::system;
@@ -26,6 +27,7 @@ thread_local! {
 
 const WIDTH_DIP: f32 = 700.0;
 const HEIGHT_DIP: f32 = 780.0;
+const THEME_COLUMNS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Switch {
@@ -67,7 +69,7 @@ enum Command {
 enum Control {
     Switch(Switch),
     Field(Field),
-    Theme(usize),
+    Theme(Theme),
     Button(Command),
 }
 
@@ -163,6 +165,7 @@ struct SettingsUi {
     fonts: Fonts,
     scale: f32,
     palette: Palette,
+    theme_previews: [Palette; Theme::ALL.len()],
     field_brush: HBRUSH,
     edits: Vec<(Field, HWND)>,
     rows: Vec<Row>,
@@ -236,8 +239,9 @@ pub fn open_settings() {
     }
     let dpi = unsafe { GetDpiForWindow(window) }.max(96);
     let scale = dpi as f32 / 96.0;
-    let palette = theme::palette(settings.theme);
-    set_dark_title(window, palette.dark);
+    let theme_previews = theme::preview_palettes();
+    let palette = theme_previews[theme_index(settings.theme)];
+    set_theme_title(window, palette);
 
     // Standard edit controls for the text fields.
     const ES_AUTOHSCROLL: u32 = 0x80;
@@ -261,6 +265,7 @@ pub fn open_settings() {
         fonts: Fonts::new(scale),
         scale,
         palette,
+        theme_previews,
         field_brush: unsafe { CreateSolidBrush(gfx::cr(palette.field)) },
         edits,
         rows: rows(),
@@ -340,8 +345,8 @@ impl SettingsUi {
     }
 
     fn set_palette(&mut self) {
-        self.palette = theme::palette(self.settings.theme);
-        set_dark_title(self.window, self.palette.dark);
+        self.palette = self.theme_previews[theme_index(self.settings.theme)];
+        set_theme_title(self.window, self.palette);
         unsafe {
             DeleteObject(self.field_brush);
             self.field_brush = CreateSolidBrush(gfx::cr(self.palette.field));
@@ -409,7 +414,7 @@ impl SettingsUi {
             Kind::Switch(_) => (self.px(40.0 + 12.0 + 28.0), self.px(20.0)),
             Kind::Field(_, w) => (self.px(*w), self.px(32.0)),
             Kind::List(_) => (0, 0),
-            Kind::Theme => (self.px(3.0 * 84.0), self.px(32.0)),
+            Kind::Theme => (0, self.px(192.0)),
             Kind::Button(_, label) => (self.canvas.text_width(self.fonts.body, label) + self.px(32.0), self.px(32.0)),
         }
     }
@@ -468,20 +473,23 @@ impl SettingsUi {
                 }
                 _ => None,
             };
-            let text_w = if matches!(row.kind, Kind::List(_)) { width - self.px(84.0) } else { text_w };
+            let stacked = matches!(row.kind, Kind::List(_) | Kind::Theme);
+            let text_w = if stacked { width - self.px(84.0) } else { text_w };
             let desc_h = self.text_height(self.fonts.caption, &description, text_w);
             let error_h = error.as_ref().map_or(0, |e| self.text_height(self.fonts.caption, e, text_w) + self.px(4.0));
             let text_h = self.px(20.0) + desc_h + error_h;
             let mut card_h = (text_h + self.px(28.0)).max(self.px(68.0));
             let control_y;
-            if let Kind::List(_) = row.kind {
+            if stacked {
                 control_y = y + self.px(14.0) + text_h + self.px(10.0);
-                card_h = text_h + self.px(14.0 + 10.0 + 100.0 + 16.0);
+                let control_h = if matches!(row.kind, Kind::List(_)) { self.px(100.0) } else { ch };
+                card_h = control_y - y + control_h + self.px(16.0);
             } else {
                 control_y = y + (card_h - ch) / 2;
             }
             let control = match row.kind {
                 Kind::List(_) => (x + self.px(68.0), control_y, width - self.px(84.0), self.px(100.0)),
+                Kind::Theme => (x + self.px(16.0), control_y, width - self.px(32.0), ch),
                 _ => (x + width - self.px(20.0) - cw, control_y, cw, ch),
             };
             cards.push(Card { row: index, y, h: card_h, section_y, control, description, error });
@@ -535,8 +543,10 @@ impl SettingsUi {
                 }
                 Kind::Field(f, _) | Kind::List(f) if inside => return Some(Control::Field(f)),
                 Kind::Theme if inside => {
-                    let segment = ((x - cx) * 3 / cw.max(1)).clamp(0, 2) as usize;
-                    return Some(Control::Theme(segment));
+                    return Theme::ALL.into_iter().enumerate().find_map(|(index, theme)| {
+                        let (tx, ty, tw, th) = theme_cell(card.control, index, self.px(8.0));
+                        (x >= tx && x < tx + tw && y >= ty && y < ty + th).then_some(Control::Theme(theme))
+                    });
                 }
                 Kind::Button(c, _) if inside => return Some(Control::Button(c)),
                 _ => {}
@@ -552,7 +562,7 @@ impl SettingsUi {
             .map(|row| match row.kind {
                 Kind::Switch(s) => Control::Switch(s),
                 Kind::Field(f, _) | Kind::List(f) => Control::Field(f),
-                Kind::Theme => Control::Theme(theme_index(self.settings.theme)),
+                Kind::Theme => Control::Theme(self.settings.theme),
                 Kind::Button(c, _) => Control::Button(c),
             })
             .collect()
@@ -631,8 +641,13 @@ impl SettingsUi {
         let pxf = |dip: f32| dip * s;
         let (x, width) = self.content_x();
         let scroll = self.scroll;
-        let card_fill = if p.dark { 0x2B2B2B } else { 0xFBFBFB };
-        let card_hover = if p.dark { 0x323232 } else { 0xF6F6F6 };
+        let (card_fill, card_hover) = if self.settings.theme.is_custom() || p.contrast {
+            (p.card, p.card_hover)
+        } else if p.dark {
+            (0x2B2B2B, 0x323232)
+        } else {
+            (0xFBFBFB, 0xF6F6F6)
+        };
         let switches = [
             Switch::History,
             Switch::Pause,
@@ -649,6 +664,10 @@ impl SettingsUi {
 
         // Page header: icon, name, version.
         let top = px(28.0) - scroll;
+        if p.motifs && top + px(56.0) > 0 {
+            c.fill(0, -scroll, w, px(92.0), p.header);
+            paint_motif(c.hdc, (x + px(292.0), top, width - px(292.0), px(40.0)), self.settings.theme, p);
+        }
         let icon = crate::tray::app_icon(px(40.0));
         if !icon.is_null() {
             unsafe {
@@ -663,7 +682,13 @@ impl SettingsUi {
         // Info bar for problems with the shortcut and similar notices.
         if let Some(notice) = &self.notice {
             let ny = px(96.0) - scroll;
-            let warn = if p.dark { 0x433519 } else { 0xFFF4CE };
+            let warn = if self.settings.theme.is_custom() || p.contrast {
+                p.banner
+            } else if p.dark {
+                0x433519
+            } else {
+                0xFFF4CE
+            };
             c.round_rect(x as f32, ny as f32, width as f32, pxf(52.0), pxf(6.0), warn, 1.0);
             c.text(self.fonts.icon, "\u{E7BA}", (x + px(16.0), ny, px(24.0), px(52.0)), p.text, DT_C);
             c.text(self.fonts.body, notice, (x + px(52.0), ny, width - px(68.0), px(52.0)), p.text, DT_L);
@@ -699,16 +724,17 @@ impl SettingsUi {
             let disabled = matches!(row.kind, Kind::Switch(Switch::History)) && self.policy_blocked
                 || matches!(row.kind, Kind::Switch(Switch::Pause)) && !self.settings.history_enabled;
             let text_color = if disabled { p.tertiary } else { p.text };
+            let stacked = matches!(row.kind, Kind::List(_) | Kind::Theme);
             c.text(
                 self.fonts.icon,
                 row.glyph,
-                (x + px(20.0), y, px(28.0), if matches!(row.kind, Kind::List(_)) { px(68.0) } else { card.h }),
+                (x + px(20.0), y, px(28.0), if stacked { px(68.0) } else { card.h }),
                 text_color,
                 DT_C,
             );
             let (cx, cy, cw, ch) = card.control;
             let cy = cy - scroll;
-            let text_right = if matches!(row.kind, Kind::List(_)) { x + width - px(16.0) } else { cx - px(16.0) };
+            let text_right = if stacked { x + width - px(16.0) } else { cx - px(16.0) };
             let text_w = text_right - (x + px(68.0));
             let desc_h = {
                 let units: Vec<u16> = card.description.encode_utf16().collect();
@@ -729,7 +755,7 @@ impl SettingsUi {
             };
             let error_h = card.error.as_ref().map_or(0, |_| px(20.0));
             let block_h = px(20.0) + desc_h + error_h;
-            let ty = if matches!(row.kind, Kind::List(_)) { y + px(14.0) } else { y + (card.h - block_h) / 2 };
+            let ty = if stacked { y + px(14.0) } else { y + (card.h - block_h) / 2 };
             c.text(self.fonts.title, row.title, (x + px(68.0), ty, text_w, px(20.0)), text_color, DT_L);
             c.text(
                 self.fonts.caption,
@@ -739,12 +765,18 @@ impl SettingsUi {
                 DT_LEFT | DT_TOP | DT_WORDBREAK,
             );
             if let Some(error) = &card.error {
-                let red = if p.dark { 0xFF99A4 } else { 0xC42B1C };
+                let error_color = if p.contrast {
+                    p.text
+                } else if p.dark {
+                    0xFF99A4
+                } else {
+                    0xC42B1C
+                };
                 c.text(
                     self.fonts.caption,
                     error,
                     (x + px(68.0), ty + px(20.0) + desc_h + px(2.0), text_w, px(18.0)),
-                    red,
+                    error_color,
                     DT_L,
                 );
             }
@@ -823,62 +855,45 @@ impl SettingsUi {
                     c.fill(cx + px(3.0), cy + ch - thickness, cw - px(6.0), thickness, underline);
                 }
                 Kind::Theme => {
-                    let current = theme_index(self.settings.theme);
-                    let seg = cw / 3;
-                    c.round_rect(cx as f32, cy as f32, cw as f32, ch as f32, pxf(4.0), p.field, 1.0);
-                    c.round_rect_outline(
-                        cx as f32,
-                        cy as f32,
-                        cw as f32,
-                        ch as f32,
-                        pxf(4.0),
-                        1.0,
-                        p.field_border,
-                        1.0,
-                    );
-                    for (i, label) in ["System", "Light", "Dark"].iter().enumerate() {
-                        let sx = cx + seg * i as i32;
-                        let selected = i == current;
-                        if selected {
-                            c.round_rect(
-                                (sx + px(3.0)) as f32,
-                                (cy + px(3.0)) as f32,
-                                (seg - px(6.0)) as f32,
-                                (ch - px(6.0)) as f32,
-                                pxf(3.0),
-                                p.accent,
-                                1.0,
-                            );
-                        } else if self.hover == Some(Control::Theme(i)) {
-                            c.round_rect(
-                                (sx + px(3.0)) as f32,
-                                (cy + px(3.0)) as f32,
-                                (seg - px(6.0)) as f32,
-                                (ch - px(6.0)) as f32,
-                                pxf(3.0),
-                                p.control_hover,
-                                1.0,
-                            );
-                        }
+                    for (i, (theme, preview)) in Theme::ALL.into_iter().zip(self.theme_previews).enumerate() {
+                        let (tx, ty, tw, th) = theme_cell((cx, cy, cw, ch), i, px(8.0));
+                        let selected = theme == self.settings.theme;
+                        let focused = focused(Control::Theme(theme));
+                        let hot = self.hover == Some(Control::Theme(theme));
+                        let frame = if focused {
+                            p.focus
+                        } else if selected || hot {
+                            p.accent
+                        } else {
+                            p.field_border
+                        };
+                        let stroke = if selected || focused { pxf(2.0) } else { pxf(1.0) };
+                        c.round_rect(tx as f32, ty as f32, tw as f32, th as f32, pxf(5.0), preview.card, 1.0);
+                        c.round_rect_outline(tx as f32, ty as f32, tw as f32, th as f32, pxf(5.0), stroke, frame, 1.0);
+                        let (ax, ay, aw) = (tx + px(5.0), ty + px(5.0), tw - px(10.0));
+                        let ah = th - px(29.0);
+                        c.fill(ax, ay, aw, ah, preview.header);
+                        // A few sample controls show the theme's surface and accent colours.
+                        c.fill(ax + px(6.0), ay + px(6.0), px(30.0), ah - px(12.0), preview.field);
+                        c.fill(ax + px(9.0), ay + px(9.0), px(13.0), px(2.0), preview.secondary);
+                        c.fill(ax + px(9.0), ay + px(14.0), px(21.0), px(3.0), preview.accent);
+                        paint_motif(c.hdc, (ax + px(38.0), ay, aw - px(38.0), ah), theme, preview);
                         c.text(
                             self.fonts.body,
-                            label,
-                            (sx, cy, seg, ch),
-                            if selected { p.on_accent } else { p.text },
-                            DT_C,
+                            theme.label(),
+                            (tx + px(9.0), ty + th - px(23.0), tw - px(32.0), px(20.0)),
+                            preview.text,
+                            DT_L,
                         );
-                    }
-                    if matches!(self.focus, Some(Control::Theme(_))) {
-                        c.round_rect_outline(
-                            cx as f32 - pxf(3.0),
-                            cy as f32 - pxf(3.0),
-                            cw as f32 + pxf(6.0),
-                            ch as f32 + pxf(6.0),
-                            pxf(6.0),
-                            pxf(2.0),
-                            p.focus,
-                            1.0,
-                        );
+                        if selected {
+                            c.text(
+                                self.fonts.icon,
+                                "\u{E73E}",
+                                (tx + tw - px(26.0), ty + th - px(23.0), px(20.0), px(20.0)),
+                                preview.text,
+                                DT_C,
+                            );
+                        }
                     }
                 }
                 Kind::Button(cm, label) => {
@@ -896,7 +911,7 @@ impl SettingsUi {
                         p.field_border,
                         1.0,
                     );
-                    let color = if danger {
+                    let color = if danger && !p.contrast {
                         if p.dark {
                             0xFF99A4
                         } else {
@@ -957,11 +972,32 @@ impl SettingsUi {
 }
 
 fn theme_index(theme: Theme) -> usize {
-    match theme {
-        Theme::System => 0,
-        Theme::Light => 1,
-        Theme::Dark => 2,
-    }
+    Theme::ALL.iter().position(|&option| option == theme).expect("theme must have a preview")
+}
+
+fn theme_cell(grid: (i32, i32, i32, i32), index: usize, gap: i32) -> (i32, i32, i32, i32) {
+    let (x, y, w, h) = grid;
+    let cols = THEME_COLUMNS as i32;
+    let rows = Theme::ALL.len().div_ceil(THEME_COLUMNS) as i32;
+    let col = index as i32 % cols;
+    let row = index as i32 / cols;
+    let offset = |length, position, count| (length + gap) * position / count;
+    let left = offset(w, col, cols);
+    let top = offset(h, row, rows);
+    (x + left, y + top, offset(w, col + 1, cols) - left - gap, offset(h, row + 1, rows) - top - gap)
+}
+
+fn adjacent_theme(theme: Theme, key: u16) -> Theme {
+    let index = theme_index(theme);
+    let col = index % THEME_COLUMNS;
+    let next = match key {
+        0x25 if col > 0 => index - 1,                            // Left
+        0x26 if index >= THEME_COLUMNS => index - THEME_COLUMNS, // Up
+        0x27 if col + 1 < THEME_COLUMNS => index + 1,            // Right
+        0x28 => index + THEME_COLUMNS,                           // Down
+        _ => index,
+    };
+    Theme::ALL.get(next).copied().unwrap_or(theme)
 }
 
 /// Changes one setting through the app and redraws.
@@ -981,7 +1017,10 @@ fn owner() -> HWND {
 fn run(deferred: Deferred) {
     match deferred {
         Deferred::Toggle(switch) => toggle(switch),
-        Deferred::Theme(theme) => change(|s| s.theme = theme),
+        Deferred::Theme(theme) => {
+            app::with(|a| a.set_theme(theme));
+            with_ui(SettingsUi::refresh_from_app);
+        }
         Deferred::Command(command) => run_command(command),
         Deferred::Commit(field) => commit(field),
     }
@@ -1159,26 +1198,23 @@ pub fn pretranslate(message: &wm::MSG) -> bool {
             let focus = with_ui(|ui| ui.focus).flatten();
             match focus {
                 Some(Control::Switch(s)) => run(Deferred::Toggle(s)),
+                Some(Control::Theme(theme)) => run(Deferred::Theme(theme)),
                 Some(Control::Button(c)) => run(Deferred::Command(c)),
                 _ => {}
             }
             true
         }
-        0x25 | 0x27 if !in_edit => {
-            // Left / Right move the theme selection.
-            let next = with_ui(|ui| match ui.focus {
-                Some(Control::Theme(i)) => {
-                    let i = if vk == 0x25 { i.saturating_sub(1) } else { (i + 1).min(2) };
-                    ui.focus = Some(Control::Theme(i));
-                    Some([Theme::System, Theme::Light, Theme::Dark][i])
+        0x25..=0x28 if !in_edit => {
+            if let Some(Control::Theme(theme)) = with_ui(|ui| ui.focus).flatten() {
+                let next = adjacent_theme(theme, vk);
+                if next != theme {
+                    with_ui(|ui| ui.focus = Some(Control::Theme(next)));
+                    run(Deferred::Theme(next));
                 }
-                _ => None,
-            })
-            .flatten();
-            if let Some(theme) = next {
-                run(Deferred::Theme(theme));
+                true
+            } else {
+                false
             }
-            true
         }
         0x21 | 0x22 if !in_edit => {
             let page = with_ui(|ui| ui.client().1 * 4 / 5).unwrap_or(400);
@@ -1254,9 +1290,9 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
                         SetFocus(hwnd);
                         Some(Deferred::Toggle(s))
                     }
-                    Control::Theme(i) => {
+                    Control::Theme(theme) => {
                         SetFocus(hwnd);
-                        Some(Deferred::Theme([Theme::System, Theme::Light, Theme::Dark][i]))
+                        Some(Deferred::Theme(theme))
                     }
                     Control::Button(c) => {
                         SetFocus(hwnd);
@@ -1304,8 +1340,9 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
                 None => wm::DefWindowProcW(hwnd, msg, wparam, lparam),
             }
         }
-        wm::WM_SETTINGCHANGE => {
+        wm::WM_SETTINGCHANGE | wm::WM_SYSCOLORCHANGE => {
             with_ui(|ui| {
+                ui.theme_previews = theme::preview_palettes();
                 ui.set_palette();
                 ui.layout();
             });
@@ -1349,5 +1386,26 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             0
         }
         _ => wm::DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod theme_picker_tests {
+    use super::*;
+
+    #[test]
+    fn arrow_keys_reach_all_custom_themes() {
+        let space = adjacent_theme(Theme::System, 0x28);
+        let paper = adjacent_theme(space, 0x27);
+        let candy = adjacent_theme(paper, 0x27);
+        assert_eq!((space, paper, candy), (Theme::DeepSpace, Theme::PaperWhite, Theme::CandyRush));
+        let frost = adjacent_theme(space, 0x28);
+        let eclipse = adjacent_theme(paper, 0x28);
+        let cyber = adjacent_theme(candy, 0x28);
+        assert_eq!((frost, eclipse, cyber), (Theme::Frost, Theme::Eclipse, Theme::CyberGrid));
+        assert_eq!(adjacent_theme(cyber, 0x28), cyber);
+        assert_eq!(adjacent_theme(cyber, 0x27), cyber);
+        assert_eq!(adjacent_theme(cyber, 0x25), eclipse);
+        assert_eq!(adjacent_theme(cyber, 0x26), candy);
     }
 }

@@ -104,6 +104,52 @@ pub enum Theme {
     System,
     Light,
     Dark,
+    DeepSpace,
+    PaperWhite,
+    CandyRush,
+    Frost,
+    Eclipse,
+    CyberGrid,
+}
+
+impl Theme {
+    pub const ALL: [Self; 9] = [
+        Self::System,
+        Self::Light,
+        Self::Dark,
+        Self::DeepSpace,
+        Self::PaperWhite,
+        Self::CandyRush,
+        Self::Frost,
+        Self::Eclipse,
+        Self::CyberGrid,
+    ];
+
+    pub const fn is_custom(self) -> bool {
+        !matches!(self, Self::System | Self::Light | Self::Dark)
+    }
+
+    const fn names(self) -> (&'static str, &'static str) {
+        match self {
+            Self::System => ("system", "System"),
+            Self::Light => ("light", "Light"),
+            Self::Dark => ("dark", "Dark"),
+            Self::DeepSpace => ("deep-space", "Deep Space"),
+            Self::PaperWhite => ("paper-white", "Paper White"),
+            Self::CandyRush => ("candy-rush", "Candy Rush"),
+            Self::Frost => ("frost", "Frost"),
+            Self::Eclipse => ("eclipse", "Eclipse"),
+            Self::CyberGrid => ("cyber-grid", "Cyber Grid"),
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        self.names().1
+    }
+
+    fn parse(value: &str) -> Self {
+        Self::ALL.into_iter().find(|theme| theme.names().0 == value).unwrap_or(Self::System)
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -173,11 +219,7 @@ impl Settings {
 
     pub fn to_text(&self) -> String {
         let flag = |b: bool| if b { "1" } else { "0" };
-        let theme = match self.theme {
-            Theme::System => "system",
-            Theme::Light => "light",
-            Theme::Dark => "dark",
-        };
+        let theme = self.theme.names().0;
         let mut out = String::from("# BetterClipboard settings\n");
         out += &format!("history_enabled={}\n", flag(self.history_enabled));
         out += &format!("paused={}\n", flag(self.paused));
@@ -218,13 +260,7 @@ impl Settings {
                 "keep_history" => s.keep_history = flag,
                 "retention_days" => s.retention_days = number.unwrap_or(0).min(3650),
                 "paste_on_select" => s.paste_on_select = flag,
-                "theme" => {
-                    s.theme = match value {
-                        "light" => Theme::Light,
-                        "dark" => Theme::Dark,
-                        _ => Theme::System,
-                    }
-                }
+                "theme" => s.theme = Theme::parse(value),
                 "recent" => {
                     s.recent =
                         value.split('\t').filter(|v| !v.is_empty()).take(RECENT_LIMIT).map(String::from).collect()
@@ -275,6 +311,28 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);
+    }
+
+    #[test]
+    fn theme_preferences_round_trip_and_keep_legacy_values() {
+        for (theme, key) in [
+            (Theme::System, "system"),
+            (Theme::Light, "light"),
+            (Theme::Dark, "dark"),
+            (Theme::DeepSpace, "deep-space"),
+            (Theme::PaperWhite, "paper-white"),
+            (Theme::CandyRush, "candy-rush"),
+            (Theme::Frost, "frost"),
+            (Theme::Eclipse, "eclipse"),
+            (Theme::CyberGrid, "cyber-grid"),
+        ] {
+            let settings = Settings { theme, keep_history: true, ..Default::default() };
+            let text = settings.to_text();
+            assert!(text.contains(&format!("\ntheme={key}\n")));
+            assert_eq!(Settings::from_text(&text), settings);
+        }
+        assert_eq!(Settings::from_text("theme=future-theme").theme, Theme::System);
+        assert_eq!(Settings::from_text("").theme, Theme::System);
     }
 
     #[test]
