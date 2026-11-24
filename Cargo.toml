@@ -1,7 +1,7 @@
 [package]
 name = "better-clipboard"
 description = "A fast, native clipboard history for Windows 11"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["TabanAziz"]
 license = "MIT"
 repository = "https://github.com/TabanAziz/BetterClipboard"
@@ -20,6 +20,18 @@ path = "src/lib.rs"
 
 [dependencies]
 png = "0.18"
+
+# Direct2D / DirectWrite, only for drawing colour emoji.
+[dependencies.windows]
+version = "0.62"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Direct2D_Common",
+  "Win32_Graphics_DirectWrite",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+]
 
 [dependencies.windows-sys]
 version = "0.59"

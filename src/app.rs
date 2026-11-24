@@ -667,12 +667,6 @@ impl App {
                 self.settings.recent.truncate(crate::settings::RECENT_LIMIT);
                 let _ = self.settings.save(&self.settings_path);
             }
-            Action::EmojiPanel => {
-                self.popup.hide();
-                if paste::focus(self.target) {
-                    paste::open_emoji_panel();
-                }
-            }
             Action::Primary => {
                 let mut next = self.settings.clone();
                 if !next.history_enabled {

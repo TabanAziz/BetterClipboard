@@ -40,7 +40,7 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 | **Paste where you were** | Pick an entry with the mouse or arrows and Enter: it goes into the app you came from. Shift+Enter pastes plain text, Ctrl+Enter only copies. |
 | **Pictures** | Previews for screenshots and copied images, "Save image as" (PNG or BMP, Ctrl+S) and "Open image". Full-screen 4K screenshots are kept. |
 | **Your phone** | With Phone Link's cross-device copy and paste, what you copy on your Android phone lands on the PC clipboard. BetterClipboard marks those entries with a phone icon ("From your phone") and has a Phone filter. |
-| **Emoji and symbols** | The heart, emoji, kaomoji and symbol tabs work inside the panel: pick a character and it is typed into the app you came from, without touching your clipboard. Recently used ones sit under the heart. |
+| **Emoji and symbols** | Emoji (in colour, like Windows), kaomoji and symbol tabs inside the panel: pick a character and it is typed into the app you came from, without touching your clipboard. Recently used ones sit under the heart. |
 | **Find things** | Type to search, filters for text, images, files, phone and pinned. Identical copies are grouped. |
 | **More than text** | Text, links, HTML and RTF keep their formatting; files copied in Explorer can be pasted again. |
 | **Keep what matters** | Pinned entries survive restarts, encrypted with DPAPI for your Windows account. Optional: keep the whole history, longer history than 25 entries, automatic removal after N days, snippets you type yourself. |
@@ -70,7 +70,7 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 
 ## Install
 
-1. Download **`BetterClipboard-Setup-0.1.0.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
+1. Download **`BetterClipboard-Setup-0.1.1.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
 2. Run it and pick how your clipboard history should open:
    - **With Win+V (recommended):** BetterClipboard replaces the Windows clipboard panel. Explorer restarts once so it works right away.
    - **Keep Win+V for Windows:** BetterClipboard opens with Win+Alt+V.
@@ -110,7 +110,7 @@ The program ends up in `target\release\BetterClipboard.exe`. `tools\release.ps1`
 
 ## Known limitations
 
-The short version: taking over Win+V switches off the shortcut of the Windows panel (Explorer restarts once), Windows' own history and its cloud sync are not readable by other apps, apps running as administrator cannot be pasted into, emoji are drawn in one colour, GIF search stays in the Windows emoji panel, and screen reader support in the panel is basic. Phone entries are recognised by the Phone Link process and were tested with a simulated sender, not a real phone. Everything is listed in [docs/limitations.md](docs/limitations.md), and the feature-by-feature comparison with Windows is in [docs/parity-matrix.csv](docs/parity-matrix.csv).
+The short version: taking over Win+V switches off the shortcut of the Windows panel (Explorer restarts once), Windows' own history and its cloud sync are not readable by other apps, apps running as administrator cannot be pasted into, there is no GIF search, and screen reader support in the panel is basic. Phone entries are recognised by the Phone Link process and were tested with a simulated sender, not a real phone. Everything is listed in [docs/limitations.md](docs/limitations.md), and the feature-by-feature comparison with Windows is in [docs/parity-matrix.csv](docs/parity-matrix.csv).
 
 ## More
 

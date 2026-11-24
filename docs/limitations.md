@@ -16,8 +16,8 @@ BetterClipboard is not a full replacement for the Windows clipboard panel. These
 
 ## Differences from the Windows panel
 
-- Emoji, kaomoji and symbols are curated lists (about 150 emoji, 40 kaomoji, 128 symbols), not the full Unicode set Windows offers. Emoji are drawn in one colour because the panel uses GDI, which cannot draw colour fonts.
-- GIF search needs an online service. BetterClipboard has no network code, so the GIF tab explains that and opens the Windows emoji panel.
+- Emoji, kaomoji and symbols are curated lists (about 150 emoji, 40 kaomoji, 128 symbols), not the full Unicode set Windows offers.
+- There is no GIF tab. GIF search needs an online service and BetterClipboard has no network code. Win+. still opens the Windows emoji panel with GIFs.
 - Choosing an emoji closes the panel; Windows keeps its panel open for several picks.
 - The panel uses a solid background instead of acrylic and has no opening animation.
 - The interface is in English only.
@@ -28,7 +28,7 @@ BetterClipboard is not a full replacement for the Windows clipboard panel. These
 ## Accessibility
 
 - The panel is custom drawn. It announces the selected entry through its window title, but it does not implement a UI Automation tree, so screen readers cannot browse entries or buttons individually. The settings and snippet windows use standard controls.
-- Keyboard: arrows, Page Up/Down, Home/End, Enter, Shift+Enter, Ctrl+Enter, Delete, Ctrl+P, Ctrl+S, Ctrl+F, Tab, Escape and the Menu key work. The tab row (emoji, GIF and so on) is mouse only.
+- Keyboard: arrows, Page Up/Down, Home/End, Enter, Shift+Enter, Ctrl+Enter, Delete, Ctrl+P, Ctrl+S, Ctrl+F, Tab, Escape and the Menu key work. The tab row (emoji, kaomoji and so on) is mouse only.
 - In dark mode the settings window uses the dark styles Windows offers for classic controls; checkboxes fall back to the classic look.
 
 ## Not verified on the test PC

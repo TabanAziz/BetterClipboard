@@ -1,6 +1,6 @@
 # Architecture
 
-BetterClipboard is a single native Win32 executable written in Rust on top of `windows-sys`. There is no UI framework, no web view and no runtime to install. The drawing layer (a 32-bit DIB back buffer with anti-aliased shapes and GDI text) is shared with Better Task Manager.
+BetterClipboard is a single native Win32 executable written in Rust on top of `windows-sys`. There is no UI framework, no web view and no runtime to install. The drawing layer (a 32-bit DIB back buffer with anti-aliased shapes and GDI text) is shared with Better Task Manager. Colour emoji are drawn into the same buffer with DirectWrite through a Direct2D DC render target (`ui/emoji.rs`), because GDI cannot draw colour fonts.
 
 ## Threads
 

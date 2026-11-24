@@ -55,14 +55,6 @@ fn key(vk: u16, up: bool) -> INPUT {
     input
 }
 
-/// Opens the Windows emoji panel (Win+.) in the focused app. It hosts the emoji, GIF,
-/// kaomoji and symbol pages that the Windows clipboard panel shows as tabs.
-pub fn open_emoji_panel() -> bool {
-    let inputs = [key(VK_LWIN, false), key(VK_OEM_PERIOD, false), key(VK_OEM_PERIOD, true), key(VK_LWIN, true)];
-    let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
-    sent as usize == inputs.len()
-}
-
 /// Types text into the focused window as Unicode keyboard input (no clipboard involved).
 pub fn type_text(text: &str) -> bool {
     let mut inputs = Vec::new();

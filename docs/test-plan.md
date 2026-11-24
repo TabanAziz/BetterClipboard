@@ -30,7 +30,7 @@ These were run with PowerShell scripts that start BetterClipboard in a separate 
 | UI-2 | Save image through the real Save dialog | Click on the save button, file name set in the dialog, OK | Passed: 750×584 PNG written, confirmation shown |
 | UI-3 | Settings: change retention, shortcut, theme and save | Controls set by message, Save clicked | Passed: settings.ini updated, light theme and new shortcut applied immediately |
 | UI-4 | Empty states (history off, nothing copied) | Screenshot | Passed |
-| UI-5 | Emoji, kaomoji, symbols and GIF pages; insert an emoji | Clicks posted to the panel; first emoji typed into a RichTextBox window | Passed: the emoji arrived, the clipboard was unchanged, it is listed under recently used |
+| UI-5 | Emoji (colour), kaomoji and symbol pages; insert an emoji | Clicks posted to the panel; first emoji typed into a RichTextBox window | Passed: the emoji arrived, the clipboard was unchanged, it is listed under recently used |
 | UI-6 | Settings page: switch, invalid number, scrolling | Clicks and EN_KILLFOCUS posted to the window | Passed: the switch applied at once, the error is shown under the setting |
 | SET | Setup file `BetterClipboard-Setup-0.1.0.exe` with "With Win+V" | Task dialog driven with TDM_CLICK_RADIO_BUTTON / TDM_CLICK_BUTTON | Passed: installed, started, Win+V owned by BetterClipboard |
 | INS | Install, start, uninstall | `--install --quiet`, check shortcut, registry and Run key, `--uninstall --quiet`, check that everything is gone | See below |

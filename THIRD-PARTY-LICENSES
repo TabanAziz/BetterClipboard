@@ -1,7 +1,8 @@
 BetterClipboard includes the following Rust crates in its executable. Each is used
 under the MIT license (several are also offered under Apache-2.0, Zlib or 0BSD; the
-MIT option is chosen here). Build-only tools (embed-resource, cc and their
-dependencies) are not part of the program.
+MIT option is chosen here). Build-only tools (embed-resource, cc, the
+windows-implement and windows-interface macros and their dependencies) are not part
+of the program.
 
 Crate                 Version  License chosen  Copyright
 png                   0.18.1   MIT             The image-rs Developers
@@ -17,6 +18,15 @@ cfg-if                1.0.5    MIT             Alex Crichton
 windows-sys           0.59.0   MIT             Copyright (c) Microsoft Corporation
 windows-targets       0.52.6   MIT             Copyright (c) Microsoft Corporation
 windows_x86_64_msvc   0.52.6   MIT             Copyright (c) Microsoft Corporation
+windows               0.62.2   MIT             Copyright (c) Microsoft Corporation
+windows-core          0.62.2   MIT             Copyright (c) Microsoft Corporation
+windows-collections   0.3.2    MIT             Copyright (c) Microsoft Corporation
+windows-future        0.3.2    MIT             Copyright (c) Microsoft Corporation
+windows-link          0.2.1    MIT             Copyright (c) Microsoft Corporation
+windows-numerics      0.3.1    MIT             Copyright (c) Microsoft Corporation
+windows-result        0.4.1    MIT             Copyright (c) Microsoft Corporation
+windows-strings       0.5.1    MIT             Copyright (c) Microsoft Corporation
+windows-threading     0.2.1    MIT             Copyright (c) Microsoft Corporation
 
 The MIT license text that applies to each of them, with the copyright line above:
 

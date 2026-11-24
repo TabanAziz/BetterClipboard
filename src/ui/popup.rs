@@ -34,17 +34,15 @@ const GLYPH_PINNED: &str = "\u{E840}";
 const GLYPH_CLOSE: &str = "\u{E711}";
 const GLYPH_CLIPBOARD: &str = "\u{E77F}";
 
-/// The tab row of the Windows panel. Only the clipboard tab is BetterClipboard's own; the
-/// others open the Windows emoji panel, which hosts those pages.
-const TABS: [(&str, bool); 6] =
-    [("\u{EB51}", true), ("\u{E76E}", true), ("GIF", false), (";-)", false), ("\u{03A9}", false), ("\u{E77F}", true)];
+/// The tab row: recently used, emoji, kaomoji, symbols and the clipboard history.
+const TABS: [(&str, bool); 5] =
+    [("\u{EB51}", true), ("\u{E76E}", true), (";-)", false), ("\u{03A9}", false), ("\u{E77F}", true)];
 const FAVOURITES_TAB: usize = 0;
 const EMOJI_TAB: usize = 1;
-const GIF_TAB: usize = 2;
-const KAOMOJI_TAB: usize = 3;
-const SYMBOLS_TAB: usize = 4;
-const CLIPBOARD_TAB: usize = 5;
-const PAGE_TITLES: [&str; 6] = ["Recently used", "Emoji", "GIF", "Kaomoji", "Symbols", "Clipboard"];
+const KAOMOJI_TAB: usize = 2;
+const SYMBOLS_TAB: usize = 3;
+const CLIPBOARD_TAB: usize = 4;
+const PAGE_TITLES: [&str; 5] = ["Recently used", "Emoji", "Kaomoji", "Symbols", "Clipboard"];
 
 /// What the panel needs from the rest of the app to draw and react.
 pub struct Context<'a> {
@@ -116,8 +114,6 @@ pub enum Action {
     SaveImage(u64),
     ClearAll,
     OpenSettings,
-    /// Emoji, GIF, kaomoji and symbols live in the Windows emoji panel.
-    EmojiPanel,
     /// Type an emoji, kaomoji or symbol into the previous app.
     Insert(String),
     /// The button in the empty state: turn history on, or resume capture.
@@ -207,6 +203,8 @@ pub struct Popup {
     page: usize,
     /// Characters of an emoji, kaomoji, symbol or favourites page.
     cells: Vec<String>,
+    /// Direct2D renderer for colour emoji, created on first use.
+    emoji: Option<super::emoji::EmojiRenderer>,
     cols: usize,
     cell: (i32, i32),
     content_h: i32,
@@ -284,6 +282,7 @@ impl Popup {
             expanded: None,
             page: CLIPBOARD_TAB,
             cells: Vec::new(),
+            emoji: None,
             cols: 8,
             cell: (1, 1),
             painted_at: 0.0,
@@ -805,9 +804,6 @@ impl Popup {
     }
 
     fn primary_label(&self, ctx: &Context) -> Option<&'static str> {
-        if self.page == GIF_TAB {
-            return Some("Open the Windows emoji panel");
-        }
         if self.page != CLIPBOARD_TAB {
             return None;
         }
@@ -889,7 +885,6 @@ impl Popup {
                 Some(text) => vec![Action::Insert(text.clone())],
                 None => Vec::new(),
             },
-            Hit::Primary if self.page == GIF_TAB => vec![Action::EmojiPanel],
             Hit::ClearAll => vec![Action::ClearAll],
             Hit::Primary => vec![Action::Primary],
             Hit::Chip(i) => {
@@ -1218,7 +1213,6 @@ impl Popup {
             KAOMOJI_TAB => "Search kaomoji",
             SYMBOLS_TAB => "Search symbols",
             FAVOURITES_TAB => "Search recently used",
-            GIF_TAB => "GIF search is not available",
             _ => "Search clipboard history",
         };
         let banner = self.banner_h(ctx);
@@ -1244,18 +1238,11 @@ impl Popup {
         header_button(c, close_r, self.hover == Hit::Close);
         c.text(self.fonts.icon_small, GLYPH_CLOSE, close_r, p.text, DT_C);
 
-        // Tab row: favourites, emoji, GIF, kaomoji, symbols, clipboard.
+        // Tab row: recently used, emoji, kaomoji, symbols, clipboard.
         for (i, (r, (label, glyph))) in tabs.iter().zip(TABS).enumerate() {
             header_button(c, *r, self.hover == Hit::Tab(i));
             let font = if glyph { self.fonts.icon } else { self.fonts.tab_text };
-            if label == "GIF" {
-                let (bw, bh) = (px(22.0), px(15.0));
-                let (bx, by) = (r.0 + (r.2 - bw) / 2, r.1 + (r.3 - bh) / 2);
-                c.round_rect_outline(bx as f32, by as f32, bw as f32, bh as f32, pxf(2.0), pxf(1.2), p.text, 1.0);
-                c.text(self.fonts.small, "GIF", (bx, by, bw, bh), p.text, DT_C);
-            } else {
-                c.text(font, label, *r, p.text, DT_C);
-            }
+            c.text(font, label, *r, p.text, DT_C);
             if i == self.page {
                 let (ux, uy) = (r.0 + r.2 / 2 - px(8.0), r.1 + r.3 - px(3.0));
                 c.round_rect(ux as f32, uy as f32, pxf(16.0), pxf(3.0), pxf(1.5), p.accent, 1.0);
@@ -1355,12 +1342,7 @@ impl Popup {
             let (cell_w, cell_h) = self.cell;
             let cols = self.cols.max(1);
             c.clip_rect(Some((0, top, w, bottom - top)));
-            let empty = if self.page == GIF_TAB {
-                Some((
-                    "GIFs need an online search",
-                    "BetterClipboard works offline, so GIF search stays in the Windows emoji panel.",
-                ))
-            } else if self.cells.is_empty() && self.page == FAVOURITES_TAB && self.query.is_empty() {
+            let empty = if self.cells.is_empty() && self.page == FAVOURITES_TAB && self.query.is_empty() {
                 Some(("Nothing used yet", "Emoji, kaomoji and symbols you insert show up here."))
             } else if self.cells.is_empty() {
                 Some(("No matches", "Try another word."))
@@ -1368,8 +1350,7 @@ impl Popup {
                 None
             };
             if let Some((title, body)) = empty {
-                let glyph = if self.page == GIF_TAB { "\u{E76E}" } else { "\u{EB51}" };
-                c.text(self.fonts.icon_large, glyph, (0, top + px(28.0), w, px(56.0)), p.text, DT_C);
+                c.text(self.fonts.icon_large, "\u{EB51}", (0, top + px(28.0), w, px(56.0)), p.text, DT_C);
                 c.text(self.fonts.title, title, (px(24.0), top + px(98.0), w - px(48.0), px(24.0)), p.text, DT_C);
                 c.text(
                     self.fonts.body,
@@ -1379,6 +1360,7 @@ impl Popup {
                     DT_CENTER | DT_WORDBREAK,
                 );
             }
+            let mut colour_emoji = Vec::new();
             for (i, text) in self.cells.iter().enumerate() {
                 let (col, row) = ((i % cols) as i32, (i / cols) as i32);
                 let (x, y) = (cx + col * cell_w, top + row * cell_h - self.scroll);
@@ -1410,15 +1392,29 @@ impl Popup {
                         1.0,
                     );
                 }
-                // The emoji font lacks many symbols; GDI would substitute wrong glyphs.
-                let font = if text.chars().count() > 3 {
-                    self.fonts.body
-                } else if crate::symbols::EMOJI.iter().any(|(e, _)| e == text) {
-                    self.fonts.emoji
-                } else {
-                    self.fonts.symbol
-                };
+                // Emoji go through DirectWrite (colour); GDI draws them as outlines only.
+                // The emoji font lacks many symbols, so symbols use the text font.
+                if crate::symbols::EMOJI.iter().any(|(e, _)| e == text) {
+                    colour_emoji.push((text.as_str(), (x, y, cell_w, cell_h)));
+                    continue;
+                }
+                let font = if text.chars().count() > 3 { self.fonts.body } else { self.fonts.symbol };
                 c.text(font, text, (x, y, cell_w, cell_h), p.text, DT_C);
+            }
+            if !colour_emoji.is_empty() {
+                unsafe { GdiFlush() };
+                if self.emoji.is_none() {
+                    self.emoji = super::emoji::EmojiRenderer::new();
+                }
+                let drawn = self
+                    .emoji
+                    .as_mut()
+                    .is_some_and(|r| r.draw(c.hdc, (w, h), (0, top, w, bottom - top), &colour_emoji, px(24.0), p.text));
+                if !drawn {
+                    for (text, rect) in &colour_emoji {
+                        c.text(self.fonts.emoji, text, *rect, p.text, DT_C);
+                    }
+                }
             }
         } else {
             if self.cards.is_empty() {
