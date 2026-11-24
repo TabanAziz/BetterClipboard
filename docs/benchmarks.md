@@ -42,9 +42,32 @@ Cold start after a reboot was not measured. A comparison with Win+V was not meas
 | Panel open, 1 000 entries | 30 | 7.8 ms | 18.2 ms | 35.8 ms | 37.3 ms | 37.3 ms |
 | Search keystroke, 10 000 entries | 68 | 6.6 ms | 13.6 ms | 14.2 ms | 20.3 ms | 20.7 ms |
 
+These first results are from 0.1.0; the re-run with 0.1.3 follows below.
+
 Idle over 300 seconds: CPU time did not advance at all (0 ms; Windows counts process CPU time in 15.6 ms steps, so the real value is below 0.006 % of one core), 11.5 MB working set, 2.0 MB private memory, 7 threads, 148 handles. The clipboard listener only wakes up when something is copied; there are no timers except an hourly retention check.
 
 Budgets from [architecture.md](architecture.md): panel p95 ≤ 80 ms (met), 1 000 entries p95 ≤ 150 ms (met), search p95 ≤ 50 ms (met), warm start p95 ≤ 150 ms (met), idle CPU < 0.5 % of one core (met).
+
+### Re-run with 0.1.3
+
+Same PC, same script (`tools\bench.ps1 -Runs 30 -IdleSeconds 300`), 24 November 2026, while the desktop was in normal use. Raw data: [bench-data/0.1.3](bench-data/0.1.3).
+
+| Measurement | 0.1.0 p50 / p95 | 0.1.3 p50 / p95 |
+| --- | --- | --- |
+| Start-up, warm | 27.9 / 35.4 ms | 25.7 / 53.3 ms |
+| Panel open, 25 entries | 19.1 / 32.6 ms | 12.5 / 20.5 ms |
+| Panel open, 1 000 entries | 18.2 / 35.8 ms | 12.7 / 19.8 ms |
+| Search keystroke, 10 000 entries | 13.6 / 14.2 ms | 13.3 / 14.3 ms |
+| Emoji page repaint (3 runs, p50) | | 1.79 / 1.14 / 0.72 ms |
+| Idle CPU over 300 s | 0 ms | 0 ms |
+| Idle working set / private memory | 11.5 / 2.0 MB | 26.1 / 8.6 MB |
+| Idle threads / handles | 7 / 148 | 7 / 230 |
+
+Notes:
+
+- The start-up p95 and p99 of 0.1.3 come from three slower runs (44 to 69 ms) while other programs were busy; the median is lower than before. All values stay within the 150 ms budget.
+- Memory is higher because 0.1.3 renders the colour emoji 1.5 s after start (Direct2D, DirectWrite and the emoji font stay loaded, about 0.8 MB of emoji bitmaps). That is what makes the emoji page open without delay.
+- The installed copy on the same PC, used normally with Win+V, was sampled twice six minutes apart: CPU time grew by 15 ms, working set stayed at 32 MB, GDI objects at 23 and USER objects at 19. No leak was visible.
 
 ### Emoji page (0.1.2)
 

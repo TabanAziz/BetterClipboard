@@ -58,12 +58,14 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 
 ## The numbers
 
-| BetterClipboard 0.1.0 | |
+| BetterClipboard 0.1.3 | |
 | --- | --- |
-| Shortcut until the painted panel, 25 entries | **19 ms** median, 33 ms p95 |
-| Same with 1 000 entries | **18 ms** median, 36 ms p95 |
-| Keystroke in search until painted, 10 000 entries | **14 ms** median, 14 ms p95 |
-| Start until ready (warm) | **28 ms** median |
+| Shortcut until the painted panel, 25 entries | **13 ms** median, 21 ms p95 |
+| Same with 1 000 entries | **13 ms** median, 20 ms p95 |
+| Keystroke in search until painted, 10 000 entries | **13 ms** median, 14 ms p95 |
+| Emoji page repaint | **about 1 ms** |
+| Start until ready (warm) | **26 ms** median |
+| CPU while idle | **0 ms** in 5 minutes |
 | Size of the program | **1.1 MB**, no runtime, no administrator rights |
 
 <sub>Measured on an Intel Core i7-11800H laptop with Windows 11 25H2 at 100% scaling. Panel times include waiting for the compositor to show the frame. Method, raw data and idle CPU in <a href="docs/benchmarks.md">docs/benchmarks.md</a>. Your numbers will differ.</sub>
