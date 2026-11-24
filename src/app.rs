@@ -148,12 +148,14 @@ pub struct Stats {
 }
 
 /// A paste waiting for the target window to take the keyboard focus back.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct PendingPaste {
     target: HWND,
     attempts: u32,
     /// When the target became the foreground window again (QPC seconds).
     focused_at: Option<f64>,
+    /// Type this text instead of pressing Ctrl+V (phone items, see `choose`).
+    text: Option<Arc<str>>,
 }
 
 pub struct App {
@@ -549,9 +551,14 @@ impl App {
     }
 
     fn begin_paste(&mut self) {
+        self.begin_paste_with(None);
+    }
+
+    /// Pastes with Ctrl+V, or types `text` when given.
+    fn begin_paste_with(&mut self, text: Option<Arc<str>>) {
         match paste::check_target(self.target) {
             Ok(()) => {
-                self.pending_paste = Some(PendingPaste { target: self.target, attempts: 0, focused_at: None });
+                self.pending_paste = Some(PendingPaste { target: self.target, attempts: 0, focused_at: None, text });
                 self.try_paste();
             }
             Err(paste::Blocked::Elevated) => {
@@ -569,7 +576,7 @@ impl App {
     }
 
     fn try_paste(&mut self) {
-        let Some(mut pending) = self.pending_paste else { return };
+        let Some(mut pending) = self.pending_paste.clone() else { return };
         let target = pending.target;
         if paste::focus(target) {
             // Browsers and Electron apps restore the focus to their text field a little
@@ -580,7 +587,11 @@ impl App {
             if ready || now - since >= 0.3 {
                 self.pending_paste = None;
                 unsafe { wm::KillTimer(self.main, PASTE_TIMER) };
-                if !paste::send_ctrl_v() {
+                let sent = match &pending.text {
+                    Some(text) => paste::type_text(text),
+                    None => paste::send_ctrl_v(),
+                };
+                if !sent {
                     self.tray.notify("Copied to the clipboard", "Windows blocked the paste. Press Ctrl+V yourself.");
                 }
             } else {
@@ -717,14 +728,31 @@ impl App {
         let Some(item) = self.history.get(id) else { return };
         let content = Arc::clone(&item.content);
         let keep_local = item.origin == Origin::Phone;
+        let fingerprint = item.fingerprint;
         let paste = mode != PasteMode::CopyOnly && self.settings.paste_on_select;
+        // Phone Link sends every change of the PC clipboard to the phone. Text that came
+        // from the phone is therefore typed in directly, without touching the clipboard.
+        let phone_text = (keep_local && paste && content.picture.is_none() && content.files.is_empty())
+            .then(|| content.preview_text())
+            .filter(|t| !t.is_empty() && t.chars().count() <= 20_000);
         self.popup.hide();
         self.history.promote(id, util::now_ms());
         if self.settings.keep_history || self.history.get(id).is_some_and(|i| i.pinned) {
             self.schedule_save();
         }
+        if let Some(text) = phone_text {
+            self.begin_paste_with(Some(Arc::from(text.as_str())));
+            return;
+        }
         if let Some(clip) = &self.clip {
-            clip.send(Command::Write { id, content, plain_text: mode == PasteMode::PlainText, paste, keep_local });
+            clip.send(Command::Write {
+                id,
+                content,
+                plain_text: mode == PasteMode::PlainText,
+                paste,
+                keep_local,
+                fingerprint,
+            });
         }
     }
 

@@ -76,6 +76,10 @@ pub enum Command {
         /// cross-device copy, Windows history and cloud sync) do not pass it on. Used for
         /// items that came from the phone, so they are not sent back to it.
         keep_local: bool,
+        /// Fingerprint of the item. With `keep_local`, nothing is written when the
+        /// clipboard still holds exactly this item: rewriting it would make Phone Link send
+        /// it to the phone again.
+        fingerprint: u64,
     },
     Configure(CaptureConfig),
     /// Empties the system clipboard (Settings > Clear clipboard data).
@@ -160,6 +164,8 @@ struct Worker {
     handled_sequence: u32,
     own_sequence: u32,
     retries: u32,
+    /// Sequence number and fingerprint of the last recorded clipboard content.
+    current: Option<(u32, u64)>,
 }
 
 thread_local! {
@@ -209,6 +215,7 @@ fn worker(ui: isize, config: CaptureConfig, events: Sender<Event>, commands: Rec
             handled_sequence: sequence,
             own_sequence: 0,
             retries: 0,
+            current: None,
         })
     });
     let _ = ready.send(if listening { window as isize } else { 0 });
@@ -346,8 +353,13 @@ impl Worker {
                     }
                     self.own_sequence = unsafe { GetClipboardSequenceNumber() };
                 }
-                Command::Write { id, content, plain_text, paste, keep_local } => {
-                    let result = self.write(&content, plain_text, keep_local);
+                Command::Write { id, content, plain_text, paste, keep_local, fingerprint } => {
+                    let unchanged = self.current == Some((unsafe { GetClipboardSequenceNumber() }, fingerprint));
+                    let result = if keep_local && unchanged && !plain_text {
+                        Ok(())
+                    } else {
+                        self.write(&content, plain_text, keep_local)
+                    };
                     self.emit(Event::Written { id, paste, result });
                 }
             }
@@ -409,7 +421,10 @@ impl Worker {
         // The data may have changed while we read it; the next notification handles that.
         self.handled_sequence = sequence;
         match read.and_then(|raw| self.finish(raw, app)) {
-            Ok(captured) => self.emit(Event::Captured(Box::new(captured))),
+            Ok(captured) => {
+                self.current = Some((sequence, captured.content.fingerprint(captured.image_print)));
+                self.emit(Event::Captured(Box::new(captured)))
+            }
             Err(skip) => self.emit(Event::Skipped(skip)),
         }
     }

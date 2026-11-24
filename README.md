@@ -70,7 +70,7 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 
 ## Install
 
-1. Download **`BetterClipboard-Setup-0.1.2.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
+1. Download **`BetterClipboard-Setup-0.1.3.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
 2. Run it and pick how your clipboard history should open:
    - **With Win+V (recommended):** BetterClipboard replaces the Windows clipboard panel. Explorer restarts once so it works right away.
    - **Keep Win+V for Windows:** BetterClipboard opens with Win+Alt+V.

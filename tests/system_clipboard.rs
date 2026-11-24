@@ -260,6 +260,7 @@ fn writes_entries_back_in_all_formats() {
         plain_text: false,
         paste: false,
         keep_local: false,
+        fingerprint: 0,
     });
     match pump_until(&events, Duration::from_secs(5)) {
         Some(Event::Written { id: 7, paste: false, result: Ok(()) }) => {}
@@ -277,7 +278,14 @@ fn writes_entries_back_in_all_formats() {
 
     // Plain text mode drops the formatting.
     let rich = Content { text: Some("plain".into()), html: Some(b"<b>plain</b>".to_vec()), ..Default::default() };
-    service.send(Command::Write { id: 8, content: Arc::new(rich), plain_text: true, paste: false, keep_local: false });
+    service.send(Command::Write {
+        id: 8,
+        content: Arc::new(rich),
+        plain_text: true,
+        paste: false,
+        keep_local: false,
+        fingerprint: 0,
+    });
     assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 8, result: Ok(()), .. })));
     assert!(get(format("HTML Format")).is_none());
 
@@ -289,11 +297,33 @@ fn writes_entries_back_in_all_formats() {
         plain_text: false,
         paste: false,
         keep_local: true,
+        fingerprint: 0,
     });
     assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 10, result: Ok(()), .. })));
     assert!(get(format("ExcludeClipboardContentFromMonitorProcessing")).is_some());
     assert_eq!(get(format("CanUploadToCloudClipboard")).unwrap()[..4], 0u32.to_le_bytes());
     assert_eq!(get(format("CanIncludeInClipboardHistory")).unwrap()[..4], 0u32.to_le_bytes());
+
+    // Choosing the phone item that is still on the clipboard writes nothing (no new
+    // clipboard change for Phone Link to send back to the phone).
+    put(&[(CF_UNICODETEXT as u32, utf16z("copied on the phone"))]);
+    let captured = match pump_until(&events, Duration::from_secs(5)) {
+        Some(Event::Captured(c)) => c,
+        _ => panic!("phone text not captured"),
+    };
+    let print = captured.content.fingerprint(captured.image_print);
+    let before = unsafe { GetClipboardSequenceNumber() };
+    let same = Content { text: Some("copied on the phone".into()), ..Default::default() };
+    service.send(Command::Write {
+        id: 11,
+        content: Arc::new(same),
+        plain_text: false,
+        paste: false,
+        keep_local: true,
+        fingerprint: print,
+    });
+    assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 11, result: Ok(()), .. })));
+    assert_eq!(unsafe { GetClipboardSequenceNumber() }, before, "clipboard was rewritten");
 
     // Files go back as CF_HDROP.
     let files = Content { files: vec![r"C:\Windows\win.ini".into()], drop_effect: Some(5), ..Default::default() };
@@ -303,6 +333,7 @@ fn writes_entries_back_in_all_formats() {
         plain_text: false,
         paste: false,
         keep_local: false,
+        fingerprint: 0,
     });
     assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 9, result: Ok(()), .. })));
     assert_eq!(bcb::clipfmt::parse_hdrop(&get(CF_HDROP as u32).unwrap()), vec![r"C:\Windows\win.ini".to_string()]);

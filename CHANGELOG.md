@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- Phone items no longer come back to the phone in the common cases. Phone Link sends every change of the PC clipboard to the phone and ignores the "do not process" markers, so BetterClipboard now avoids changing the clipboard for phone items:
+  - choosing the phone item that is still on the clipboard pastes it without writing anything;
+  - older text from the phone is typed into the app instead of going through the clipboard.
+- Older pictures from the phone still have to go through the clipboard, so Phone Link may send those back.
+
 ## 0.1.2
 
 - The emoji page is instant: colour emoji are rendered once on a background thread and then only copied. First opening went from about 400 ms to about 2 ms, a repaint while moving the mouse from about 31 ms to under 1 ms.

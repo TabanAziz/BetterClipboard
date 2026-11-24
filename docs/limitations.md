@@ -13,7 +13,7 @@ BetterClipboard is not a full replacement for the Windows clipboard panel. These
 
 - Phone entries are recognised by the process that writes them (`PhoneExperienceHost.exe` and related Phone Link processes). That only works when "Cross-device copy and paste" is turned on in Phone Link, which Phone Link supports for certain Android phones; iPhones are not supported by that feature.
 - Recognition was first tested with a process named like Phone Link, later on the test PC with a real Samsung phone (an image copied on the phone appeared marked "From your phone").
-- Items from the phone are written back with the documented markers that tell clipboard monitors, Windows history and cloud sync to ignore them, so Phone Link does not send them back to the phone. Whether every Phone Link version honours these markers could not be checked from the PC side.
+- Phone Link sends every change of the PC clipboard to the phone and, as tested with a Samsung phone, ignores the documented "do not process" markers. So BetterClipboard avoids changing the clipboard for phone items: the item that is still on the clipboard is pasted without rewriting it, and older phone text is typed in directly. An older phone picture has to be put on the clipboard to be pasted, and then Phone Link sends it back to the phone. There is no public way to stop that from the PC.
 - The detection was first tested by writing to the clipboard from a process with the Phone Link file name. If a future Phone Link version writes from a differently named process, its entries show up as normal entries.
 
 ## Differences from the Windows panel

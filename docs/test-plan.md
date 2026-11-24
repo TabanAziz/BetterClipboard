@@ -34,7 +34,7 @@ These were run with PowerShell scripts that start BetterClipboard in a separate 
 | UI-6 | Settings page: switch, invalid number, scrolling | Clicks and EN_KILLFOCUS posted to the window | Passed: the switch applied at once, the error is shown under the setting |
 | UI-7 | Click an entry after Win+V, paste into a browser text field (Edge app window) | Real Win+V and one real click; text field read through the page title | Passed with 0.1.1 and 0.1.2 |
 | UI-8 | Colour emoji page speed | `--bench-emoji` | See benchmarks.md |
-| PH-1 | Phone item written back without being sent to the phone again | System clipboard test checks the markers; the phone side needs a real device | Markers verified; phone side reported by the user |
+| PH-1 | Phone item pasted without being sent back to the phone | Markers alone: the user still saw the copy on the phone (0.1.2). 0.1.3: system clipboard test proves the current phone item is not rewritten; desktop test with real Win+V and click typed an older phone text into the target while the clipboard sequence number stayed the same | Passed on the PC; phone side to be confirmed by the user |
 | SET | Setup file `BetterClipboard-Setup-0.1.0.exe` with "With Win+V" | Task dialog driven with TDM_CLICK_RADIO_BUTTON / TDM_CLICK_BUTTON | Passed: installed, started, Win+V owned by BetterClipboard |
 | INS | Install, start, uninstall | `--install --quiet`, check shortcut, registry and Run key, `--uninstall --quiet`, check that everything is gone | See below |
 
