@@ -63,6 +63,27 @@ pub fn open_emoji_panel() -> bool {
     sent as usize == inputs.len()
 }
 
+/// Types text into the focused window as Unicode keyboard input (no clipboard involved).
+pub fn type_text(text: &str) -> bool {
+    let mut inputs = Vec::new();
+    for unit in text.encode_utf16() {
+        for up in [false, true] {
+            let mut input: INPUT = unsafe { std::mem::zeroed() };
+            input.r#type = INPUT_KEYBOARD;
+            input.Anonymous.ki = KEYBDINPUT {
+                wVk: 0,
+                wScan: unit,
+                dwFlags: KEYEVENTF_UNICODE | if up { KEYEVENTF_KEYUP } else { 0 },
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            inputs.push(input);
+        }
+    }
+    let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+    sent as usize == inputs.len()
+}
+
 /// Sends Ctrl+V. Modifiers still held from the hotkey are released first; a harmless
 /// unassigned key keeps a released Windows key from opening Start.
 pub fn send_ctrl_v() -> bool {

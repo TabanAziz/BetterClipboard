@@ -129,6 +129,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Clipboard owners whose content is never recorded (process file names).
     pub excluded_apps: Vec<String>,
+    /// Emoji, kaomoji and symbols inserted recently, newest first.
+    pub recent: Vec<String>,
 }
 
 impl Default for Settings {
@@ -151,11 +153,13 @@ impl Default for Settings {
                 "1Password.exe".into(),
                 "Bitwarden.exe".into(),
             ],
+            recent: Vec::new(),
         }
     }
 }
 
 pub const MAX_ITEMS_LIMIT: u32 = 100_000;
+pub const RECENT_LIMIT: usize = 32;
 pub const MAX_ITEM_MB_LIMIT: u32 = 256;
 
 impl Settings {
@@ -187,6 +191,7 @@ impl Settings {
         out += &format!("paste_on_select={}\n", flag(self.paste_on_select));
         out += &format!("theme={theme}\n");
         out += &format!("excluded_apps={}\n", self.excluded_apps.join(";"));
+        out += &format!("recent={}\n", self.recent.join("\t"));
         out
     }
 
@@ -219,6 +224,10 @@ impl Settings {
                         "dark" => Theme::Dark,
                         _ => Theme::System,
                     }
+                }
+                "recent" => {
+                    s.recent =
+                        value.split('\t').filter(|v| !v.is_empty()).take(RECENT_LIMIT).map(String::from).collect()
                 }
                 "excluded_apps" => {
                     s.excluded_apps =
@@ -262,6 +271,7 @@ mod tests {
             theme: Theme::Dark,
             excluded_apps: vec!["a.exe".into(), "b.exe".into()],
             hotkey: Hotkey::parse("Ctrl+Shift+F1").unwrap(),
+            recent: vec!["😀".into(), "¯\\_(ツ)_/¯".into(), "(=^･ω･^=)".into()],
             ..Default::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);

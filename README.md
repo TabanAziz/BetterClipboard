@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/TabanAziz/BetterClipboard/releases/latest"><b>Download</b></a> ·
   <a href="#install">Install</a> ·
   <a href="#what-you-get">Features</a> ·
   <a href="#the-numbers">Numbers</a> ·
@@ -39,6 +40,7 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 | **Paste where you were** | Pick an entry with the mouse or arrows and Enter: it goes into the app you came from. Shift+Enter pastes plain text, Ctrl+Enter only copies. |
 | **Pictures** | Previews for screenshots and copied images, "Save image as" (PNG or BMP, Ctrl+S) and "Open image". Full-screen 4K screenshots are kept. |
 | **Your phone** | With Phone Link's cross-device copy and paste, what you copy on your Android phone lands on the PC clipboard. BetterClipboard marks those entries with a phone icon ("From your phone") and has a Phone filter. |
+| **Emoji and symbols** | The heart, emoji, kaomoji and symbol tabs work inside the panel: pick a character and it is typed into the app you came from, without touching your clipboard. Recently used ones sit under the heart. |
 | **Find things** | Type to search, filters for text, images, files, phone and pinned. Identical copies are grouped. |
 | **More than text** | Text, links, HTML and RTF keep their formatting; files copied in Explorer can be pasted again. |
 | **Keep what matters** | Pinned entries survive restarts, encrypted with DPAPI for your Windows account. Optional: keep the whole history, longer history than 25 entries, automatic removal after N days, snippets you type yourself. |
@@ -47,7 +49,11 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 <p align="center">
   <img src="assets/screenshots/phone-filter.png" width="270" alt="Phone filter with a text and a photo from the phone">
   <img src="assets/screenshots/see-more.png" width="270" alt="See more reveals pin and delete">
-  <img src="assets/screenshots/settings.png" width="270" alt="Settings window">
+  <img src="assets/screenshots/emoji.png" width="270" alt="Emoji page">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/settings.png" width="560" alt="Settings in the style of Windows 11 Settings">
 </p>
 
 ## The numbers
@@ -58,28 +64,36 @@ BetterClipboard keeps the panel people already know, the same layout and the sam
 | Same with 1 000 entries | **18 ms** median, 36 ms p95 |
 | Keystroke in search until painted, 10 000 entries | **14 ms** median, 14 ms p95 |
 | Start until ready (warm) | **28 ms** median |
-| Size of the program | **1 MB**, no runtime, no administrator rights |
+| Size of the program | **1.1 MB**, no runtime, no administrator rights |
 
 <sub>Measured on an Intel Core i7-11800H laptop with Windows 11 25H2 at 100% scaling. Panel times include waiting for the compositor to show the frame. Method, raw data and idle CPU in <a href="docs/benchmarks.md">docs/benchmarks.md</a>. Your numbers will differ.</sub>
 
 ## Install
 
-Download `BetterClipboard.exe` from the releases page, or build it (below), then run:
+1. Download **`BetterClipboard-Setup-0.1.0.exe`** from the [latest release](https://github.com/TabanAziz/BetterClipboard/releases/latest).
+2. Run it and pick how your clipboard history should open:
+   - **With Win+V (recommended):** BetterClipboard replaces the Windows clipboard panel. Explorer restarts once so it works right away.
+   - **Keep Win+V for Windows:** BetterClipboard opens with Win+Alt+V.
+3. Click Install, then press Win+V.
 
-    BetterClipboard.exe --install
+<p align="center">
+  <img src="assets/screenshots/setup.png" width="520" alt="Setup dialog">
+</p>
 
-This copies the program to `%LOCALAPPDATA%\Programs\BetterClipboard`, adds it to the Start menu and to "Installed apps", and starts it at sign-in. No administrator rights needed. Remove it from Settings > Apps, or with `BetterClipboard.exe --uninstall`.
+Setup installs for your account only (`%LOCALAPPDATA%\Programs\BetterClipboard`), adds a Start menu entry and an "Installed apps" entry, and optionally starts BetterClipboard when you sign in. No administrator rights are needed. The program is not code-signed yet, so Windows SmartScreen may ask once: choose "More info" and "Run anyway".
 
-You can also just run the exe without installing.
+Uninstall from Settings > Apps > Installed apps. That also gives Win+V back to Windows.
+
+Prefer no installer? The release also has a portable zip; run `BetterClipboard.exe` from anywhere. For scripted installs: `BetterClipboard.exe --install --use-win-v --quiet`.
 
 ## Use
 
-- **Win+Alt+V** opens the history (change it in Settings). Clicking the tray icon works too.
-- Want Win+V to open BetterClipboard instead of the Windows panel? Run `BetterClipboard.exe --use-win-v` or use Settings > "Use Win+V...". It switches off Windows' own Win+V for your account and restarts Explorer so it applies right away. `--windows-win-v`, the same button or uninstalling gives Win+V back.
+- **Win+V** (if you chose it in setup) or **Win+Alt+V** opens the history. Clicking the tray icon works too.
+- Switch between the two any time in Settings > "Open with Win+V", or with `--use-win-v` / `--windows-win-v`. Explorer restarts once, no sign-out needed.
 - Right-click an entry or press the Menu key for everything else: paste as plain text, copy only, pin, delete, save or open an image, show a file in Explorer.
 - To get your phone's clipboard: in Phone Link, turn on "Cross-device copy and paste" (Settings > Features). It works with supported Android phones.
 
-Command line: `--show`, `--settings`, `--snippet`, `--quit`, `--background`, `--install`, `--uninstall`.
+Command line: `--show`, `--settings`, `--snippet`, `--quit`, `--background`, `--setup`, `--install`, `--uninstall`, `--use-win-v`, `--windows-win-v`.
 
 ## System requirements
 
@@ -92,11 +106,11 @@ Rust stable with the MSVC toolchain:
     cargo build --release
     powershell -File tools\check.ps1
 
-The program ends up in `target\release\BetterClipboard.exe`. `tools\release.ps1` builds the portable zip with checksums. Tests that use the real clipboard: see [CONTRIBUTING.md](CONTRIBUTING.md).
+The program ends up in `target\release\BetterClipboard.exe`. `tools\release.ps1` builds the setup file, the portable zip and checksums in `dist\`. The setup file is the same program under a name containing "Setup", which makes it show the setup dialog. Tests that use the real clipboard: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Known limitations
 
-The short version: Win+V cannot be taken over without signing out, Windows' own history and its cloud sync are not readable by other apps, apps running as administrator cannot be pasted into, the emoji/GIF tabs open the Windows emoji panel, and screen reader support in the panel is basic. Phone entries are recognised by the Phone Link process and were tested with a simulated sender, not a real phone. Everything is listed in [docs/limitations.md](docs/limitations.md), and the feature-by-feature comparison with Windows is in [docs/parity-matrix.csv](docs/parity-matrix.csv).
+The short version: taking over Win+V switches off the shortcut of the Windows panel (Explorer restarts once), Windows' own history and its cloud sync are not readable by other apps, apps running as administrator cannot be pasted into, emoji are drawn in one colour, GIF search stays in the Windows emoji panel, and screen reader support in the panel is basic. Phone entries are recognised by the Phone Link process and were tested with a simulated sender, not a real phone. Everything is listed in [docs/limitations.md](docs/limitations.md), and the feature-by-feature comparison with Windows is in [docs/parity-matrix.csv](docs/parity-matrix.csv).
 
 ## More
 

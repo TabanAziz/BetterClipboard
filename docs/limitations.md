@@ -16,7 +16,9 @@ BetterClipboard is not a full replacement for the Windows clipboard panel. These
 
 ## Differences from the Windows panel
 
-- The emoji, GIF, kaomoji and symbol tabs open the Windows emoji panel (Win+.) in the previous app instead of switching pages inside the panel.
+- Emoji, kaomoji and symbols are curated lists (about 150 emoji, 40 kaomoji, 128 symbols), not the full Unicode set Windows offers. Emoji are drawn in one colour because the panel uses GDI, which cannot draw colour fonts.
+- GIF search needs an online service. BetterClipboard has no network code, so the GIF tab explains that and opens the Windows emoji panel.
+- Choosing an emoji closes the panel; Windows keeps its panel open for several picks.
 - The panel uses a solid background instead of acrylic and has no opening animation.
 - The interface is in English only.
 - Pictures are counted by their compressed size and may be up to 32 MB, so full-screen screenshots of 4K and 5K displays are kept. Windows counts the uncompressed size against 4 MB.

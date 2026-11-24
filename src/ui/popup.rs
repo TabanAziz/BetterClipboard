@@ -38,11 +38,19 @@ const GLYPH_CLIPBOARD: &str = "\u{E77F}";
 /// others open the Windows emoji panel, which hosts those pages.
 const TABS: [(&str, bool); 6] =
     [("\u{EB51}", true), ("\u{E76E}", true), ("GIF", false), (";-)", false), ("\u{03A9}", false), ("\u{E77F}", true)];
+const FAVOURITES_TAB: usize = 0;
+const EMOJI_TAB: usize = 1;
+const GIF_TAB: usize = 2;
+const KAOMOJI_TAB: usize = 3;
+const SYMBOLS_TAB: usize = 4;
 const CLIPBOARD_TAB: usize = 5;
+const PAGE_TITLES: [&str; 6] = ["Recently used", "Emoji", "GIF", "Kaomoji", "Symbols", "Clipboard"];
 
 /// What the panel needs from the rest of the app to draw and react.
 pub struct Context<'a> {
     pub history: &'a History,
+    /// Emoji, kaomoji and symbols inserted recently, newest first (the favourites page).
+    pub recent: &'a [String],
     pub history_enabled: bool,
     pub paused: bool,
     pub policy_blocked: bool,
@@ -68,6 +76,7 @@ pub enum Hit {
     Close,
     Tab(usize),
     Grabber,
+    Cell(usize),
     Primary,
     Card(usize),
     CardButton(usize, Button),
@@ -109,6 +118,8 @@ pub enum Action {
     OpenSettings,
     /// Emoji, GIF, kaomoji and symbols live in the Windows emoji panel.
     EmojiPanel,
+    /// Type an emoji, kaomoji or symbol into the previous app.
+    Insert(String),
     /// The button in the empty state: turn history on, or resume capture.
     Primary,
 }
@@ -134,6 +145,8 @@ struct Fonts {
     icon_small: HFONT,
     icon_large: HFONT,
     tab_text: HFONT,
+    emoji: HFONT,
+    symbol: HFONT,
 }
 
 impl Fonts {
@@ -149,14 +162,25 @@ impl Fonts {
             icon: make_font(icons, px(16.0), 400),
             icon_small: make_font(icons, px(12.0), 400),
             icon_large: make_font(icons, px(44.0), 400),
+            emoji: make_font("Segoe UI Emoji", px(22.0), 400),
+            symbol: make_font(face, px(20.0), 400),
             tab_text: make_font(face, px(12.0), 600),
         }
     }
 
     fn release(&self) {
-        for f in
-            [self.title, self.body, self.small, self.chip, self.icon, self.icon_small, self.icon_large, self.tab_text]
-        {
+        for f in [
+            self.title,
+            self.body,
+            self.small,
+            self.chip,
+            self.icon,
+            self.icon_small,
+            self.icon_large,
+            self.tab_text,
+            self.emoji,
+            self.symbol,
+        ] {
             unsafe { DeleteObject(f) };
         }
     }
@@ -178,7 +202,13 @@ pub struct Popup {
     focus: Focus,
     selected: usize,
     cards: Vec<Card>,
-    built_for: Option<(u64, String, Filter, i32)>,
+    built_for: Option<(u64, String, Filter, i32, usize, usize)>,
+    /// The page of the tab row that is shown (CLIPBOARD_TAB for the history).
+    page: usize,
+    /// Characters of an emoji, kaomoji, symbol or favourites page.
+    cells: Vec<String>,
+    cols: usize,
+    cell: (i32, i32),
     content_h: i32,
     scroll: i32,
     hover: Hit,
@@ -252,6 +282,10 @@ impl Popup {
             drag: None,
             toast: None,
             expanded: None,
+            page: CLIPBOARD_TAB,
+            cells: Vec::new(),
+            cols: 8,
+            cell: (1, 1),
             painted_at: 0.0,
         }
     }
@@ -325,6 +359,7 @@ impl Popup {
         self.hover = Hit::None;
         self.toast = None;
         self.expanded = None;
+        self.page = CLIPBOARD_TAB;
         self.built_for = None;
         // Win+V always opens at the newest entry.
         self.cards.clear();
@@ -403,13 +438,16 @@ impl Popup {
         self.px(190.0)
     }
     fn banner_h(&self, ctx: &Context) -> i32 {
-        if ctx.paused || ctx.notice.is_some() {
+        if self.page == CLIPBOARD_TAB && (ctx.paused || ctx.notice.is_some()) {
             self.px(40.0)
         } else {
             0
         }
     }
     fn list_top(&self, ctx: &Context) -> i32 {
+        if self.page != CLIPBOARD_TAB {
+            return self.chips_y();
+        }
         self.px(190.0) + self.banner_h(ctx)
     }
     fn list_bottom(&self) -> i32 {
@@ -453,8 +491,13 @@ impl Popup {
     }
 
     pub fn rebuild(&mut self, ctx: &Context) {
-        let key = (ctx.history.revision, self.query.clone(), self.filter, self.width());
+        let key = (ctx.history.revision, self.query.clone(), self.filter, self.width(), self.page, ctx.recent.len());
         if self.built_for.as_ref() == Some(&key) {
+            return;
+        }
+        if self.page != CLIPBOARD_TAB {
+            self.build_cells(ctx);
+            self.built_for = Some(key);
             return;
         }
         let previous = self.cards.get(self.selected).map(|c| c.id);
@@ -592,13 +635,13 @@ impl Popup {
                 return Hit::Tab(i);
             }
         }
-        if inside(self.clear_all_rect()) && ctx.history_enabled {
+        if inside(self.clear_all_rect()) && ctx.history_enabled && self.page == CLIPBOARD_TAB {
             return Hit::ClearAll;
         }
-        if ctx.history_enabled {
-            if inside(self.search_rect()) {
-                return Hit::Search;
-            }
+        if (ctx.history_enabled || self.page != CLIPBOARD_TAB) && inside(self.search_rect()) {
+            return Hit::Search;
+        }
+        if ctx.history_enabled && self.page == CLIPBOARD_TAB {
             for (i, r) in self.chip_rects().into_iter().enumerate() {
                 if inside(r) {
                     return Hit::Chip(i);
@@ -618,6 +661,9 @@ impl Popup {
             return Hit::Scrollbar;
         }
         let list_y = y - top + self.scroll;
+        if self.page != CLIPBOARD_TAB {
+            return self.cell_at(x, list_y);
+        }
         if x < self.card_x() || x >= self.card_x() + self.card_w() {
             return Hit::None;
         }
@@ -632,6 +678,110 @@ impl Popup {
         Hit::Card(index)
     }
 
+    /// Switches between the clipboard and the emoji, kaomoji and symbol pages.
+    fn set_page(&mut self, page: usize, ctx: &Context) {
+        if self.page == page {
+            return;
+        }
+        self.page = page;
+        self.query.clear();
+        self.caret = 0;
+        self.selected = 0;
+        self.scroll = 0;
+        self.focus = Focus::List;
+        self.built_for = None;
+        self.rebuild(ctx);
+        self.invalidate();
+    }
+
+    fn build_cells(&mut self, ctx: &Context) {
+        let query = self.query.to_lowercase();
+        let matches = |text: &str| query.is_empty() || text.to_lowercase().contains(&query);
+        self.cells = match self.page {
+            FAVOURITES_TAB => ctx.recent.iter().filter(|t| matches(t)).cloned().collect(),
+            EMOJI_TAB => crate::symbols::EMOJI
+                .iter()
+                .filter(|(_, words)| query.split_whitespace().all(|w| words.contains(w)))
+                .map(|(e, _)| e.to_string())
+                .collect(),
+            KAOMOJI_TAB => crate::symbols::KAOMOJI.iter().filter(|k| matches(k)).map(|k| k.to_string()).collect(),
+            SYMBOLS_TAB => crate::symbols::SYMBOLS.iter().filter(|s| matches(s)).map(|s| s.to_string()).collect(),
+            _ => Vec::new(),
+        };
+        // Kaomoji are wide; everything else fits a square cell.
+        let wide = self.cells.iter().any(|t| t.chars().count() > 3);
+        let width = self.card_w();
+        self.cols = if wide { 2 } else { 8 };
+        self.cell = (width / self.cols as i32, if wide { self.px(40.0) } else { self.px(44.0) });
+        let rows = self.cells.len().div_ceil(self.cols) as i32;
+        self.content_h = rows * self.cell.1;
+        self.selected = self.selected.min(self.cells.len().saturating_sub(1));
+        let view = self.list_bottom() - self.list_top(ctx);
+        self.clamp_scroll_for(view);
+    }
+
+    fn cell_at(&self, x: i32, list_y: i32) -> Hit {
+        let (cell_w, cell_h) = self.cell;
+        let col = (x - self.card_x()) / cell_w.max(1);
+        if x < self.card_x() || col >= self.cols as i32 || list_y < 0 {
+            return Hit::None;
+        }
+        let index = (list_y / cell_h.max(1)) as usize * self.cols + col as usize;
+        if index < self.cells.len() {
+            Hit::Cell(index)
+        } else {
+            Hit::None
+        }
+    }
+
+    /// Arrow keys, Enter and Tab on the emoji, kaomoji and symbol pages.
+    fn on_grid_key(&mut self, vk: u16, ctx: &Context) -> Option<Vec<Action>> {
+        let cols = self.cols.max(1) as i32;
+        let count = self.cells.len() as i32;
+        let in_list = self.focus == Focus::List;
+        let step = match vk {
+            VK_LEFT if in_list => Some(-1),
+            VK_RIGHT if in_list => Some(1),
+            VK_UP => Some(-cols),
+            VK_DOWN => Some(cols),
+            _ => None,
+        };
+        if let Some(step) = step {
+            if !in_list {
+                if vk == VK_DOWN && count > 0 {
+                    self.focus = Focus::List;
+                    self.selected = 0;
+                }
+            } else if vk == VK_UP && (self.selected as i32) < cols {
+                self.focus = Focus::Search;
+                self.caret = self.query.len();
+            } else if count > 0 {
+                self.selected = (self.selected as i32 + step).clamp(0, count - 1) as usize;
+                let (_, cell_h) = self.cell;
+                let row_y = (self.selected as i32 / cols) * cell_h;
+                let view = self.list_bottom() - self.list_top(ctx);
+                if row_y < self.scroll {
+                    self.scroll = row_y;
+                } else if row_y + cell_h > self.scroll + view {
+                    self.scroll = row_y + cell_h - view;
+                }
+            }
+            self.invalidate();
+            return Some(Vec::new());
+        }
+        match vk {
+            VK_RETURN if in_list || count > 0 => {
+                Some(self.cells.get(self.selected).map(|t| vec![Action::Insert(t.clone())]).unwrap_or_default())
+            }
+            VK_TAB => {
+                self.focus = if in_list { Focus::Search } else { Focus::List };
+                self.invalidate();
+                Some(Vec::new())
+            }
+            _ => None,
+        }
+    }
+
     fn card_buttons_for_hit(&self, index: usize) -> Vec<Button> {
         self.card_buttons(index)
     }
@@ -639,7 +789,7 @@ impl Popup {
     fn primary_rect(&self, ctx: &Context) -> Option<(i32, i32, i32, i32)> {
         let label = self.primary_label(ctx)?;
         let w = self.canvas.text_width(self.fonts.body, label) + self.px(32.0);
-        if ctx.paused && ctx.history_enabled && !ctx.policy_blocked {
+        if self.page == CLIPBOARD_TAB && ctx.paused && ctx.history_enabled && !ctx.policy_blocked {
             // The "Resume" button sits inside the banner.
             let banner_y = self.banner_y();
             return Some((
@@ -655,6 +805,12 @@ impl Popup {
     }
 
     fn primary_label(&self, ctx: &Context) -> Option<&'static str> {
+        if self.page == GIF_TAB {
+            return Some("Open the Windows emoji panel");
+        }
+        if self.page != CLIPBOARD_TAB {
+            return None;
+        }
         if ctx.policy_blocked {
             None
         } else if !ctx.history_enabled {
@@ -725,7 +881,15 @@ impl Popup {
         match hit {
             Hit::Settings => vec![Action::OpenSettings],
             Hit::Close => vec![Action::Hide],
-            Hit::Tab(i) if i != CLIPBOARD_TAB => vec![Action::EmojiPanel],
+            Hit::Tab(i) => {
+                self.set_page(i, ctx);
+                Vec::new()
+            }
+            Hit::Cell(i) => match self.cells.get(i) {
+                Some(text) => vec![Action::Insert(text.clone())],
+                None => Vec::new(),
+            },
+            Hit::Primary if self.page == GIF_TAB => vec![Action::EmojiPanel],
             Hit::ClearAll => vec![Action::ClearAll],
             Hit::Primary => vec![Action::Primary],
             Hit::Chip(i) => {
@@ -811,6 +975,11 @@ impl Popup {
         let (ctrl, shift) = (down(VK_CONTROL), down(VK_SHIFT));
         let in_search = self.focus == Focus::Search;
         let page = (self.viewport(ctx) / self.px(80.0)).max(1);
+        if self.page != CLIPBOARD_TAB {
+            if let Some(actions) = self.on_grid_key(vk, ctx) {
+                return actions;
+            }
+        }
         match vk {
             VK_ESCAPE => {
                 if !self.query.is_empty() {
@@ -1042,7 +1211,16 @@ impl Popup {
         let section_y = self.section_y();
         let banner_y = self.banner_y();
         let (sx, sy, sw, sh) = self.search_rect();
-        let chips = self.chip_rects();
+        let chips = if self.page == CLIPBOARD_TAB { self.chip_rects() } else { Vec::new() };
+        let page_title = PAGE_TITLES[self.page];
+        let placeholder = match self.page {
+            EMOJI_TAB => "Search emoji",
+            KAOMOJI_TAB => "Search kaomoji",
+            SYMBOLS_TAB => "Search symbols",
+            FAVOURITES_TAB => "Search recently used",
+            GIF_TAB => "GIF search is not available",
+            _ => "Search clipboard history",
+        };
         let banner = self.banner_h(ctx);
         let (top, bottom) = (self.list_top(ctx), self.list_bottom());
         let cx = self.card_x();
@@ -1078,21 +1256,21 @@ impl Popup {
             } else {
                 c.text(font, label, *r, p.text, DT_C);
             }
-            if i == CLIPBOARD_TAB {
+            if i == self.page {
                 let (ux, uy) = (r.0 + r.2 / 2 - px(8.0), r.1 + r.3 - px(3.0));
                 c.round_rect(ux as f32, uy as f32, pxf(16.0), pxf(3.0), pxf(1.5), p.accent, 1.0);
             }
         }
 
         // Section title and "Clear all".
-        c.text(self.fonts.body, "Clipboard", (px(16.0), section_y, w / 2, px(30.0)), p.text, DT_L);
-        if ctx.history_enabled && !self.cards.is_empty() {
+        c.text(self.fonts.body, page_title, (px(16.0), section_y, w / 2, px(30.0)), p.text, DT_L);
+        if self.page == CLIPBOARD_TAB && ctx.history_enabled && !self.cards.is_empty() {
             header_button(c, clear_r, self.hover == Hit::ClearAll);
             c.text(self.fonts.body, "Clear all", clear_r, p.text, DT_C);
         }
 
         // Search box and filters (BetterClipboard additions), shown while history is on.
-        if ctx.history_enabled {
+        if ctx.history_enabled || self.page != CLIPBOARD_TAB {
             let focused = self.focus == Focus::Search;
             c.round_rect(sx as f32, sy as f32, sw as f32, sh as f32, pxf(4.0), p.field, 1.0);
             c.round_rect_outline(sx as f32, sy as f32, sw as f32, sh as f32, pxf(4.0), 1.0, p.field_border, 1.0);
@@ -1102,7 +1280,7 @@ impl Popup {
             c.text(self.fonts.icon_small, GLYPH_SEARCH, (sx + px(10.0), sy, px(16.0), sh), p.secondary, DT_C);
             let text_x = sx + px(34.0);
             if self.query.is_empty() {
-                c.text(self.fonts.body, "Search clipboard history", (text_x, sy, sw - px(44.0), sh), p.tertiary, DT_L);
+                c.text(self.fonts.body, placeholder, (text_x, sy, sw - px(44.0), sh), p.tertiary, DT_L);
             } else {
                 c.text(self.fonts.body, &self.query, (text_x, sy, sw - px(44.0), sh), p.text, DT_L);
             }
@@ -1172,179 +1350,265 @@ impl Popup {
             c.text(self.fonts.small, text, (px(44.0), y, w - px(150.0), banner - px(4.0)), p.text, DT_L);
         }
 
-        // List.
-        if self.cards.is_empty() {
-            let (title, body) = if ctx.policy_blocked {
-                ("Clipboard history is off", "Your organization manages this setting.")
-            } else if !ctx.history_enabled {
-                ("Let's get started", "Turn on clipboard history to copy and view multiple items.")
-            } else if !self.query.is_empty() || self.filter != Filter::All {
-                ("No matches", "Try another word or filter.")
+        // List, or the grid of an emoji / kaomoji / symbol page.
+        if self.page != CLIPBOARD_TAB {
+            let (cell_w, cell_h) = self.cell;
+            let cols = self.cols.max(1);
+            c.clip_rect(Some((0, top, w, bottom - top)));
+            let empty = if self.page == GIF_TAB {
+                Some((
+                    "GIFs need an online search",
+                    "BetterClipboard works offline, so GIF search stays in the Windows emoji panel.",
+                ))
+            } else if self.cells.is_empty() && self.page == FAVOURITES_TAB && self.query.is_empty() {
+                Some(("Nothing used yet", "Emoji, kaomoji and symbols you insert show up here."))
+            } else if self.cells.is_empty() {
+                Some(("No matches", "Try another word."))
             } else {
-                ("You haven't copied anything yet", "Copy text, links, screenshots or files and they show up here.")
+                None
             };
-            c.text(self.fonts.icon_large, GLYPH_CLIPBOARD, (0, top + px(28.0), w, px(56.0)), p.text, DT_C);
-            c.text(self.fonts.title, title, (px(24.0), top + px(98.0), w - px(48.0), px(24.0)), p.text, DT_C);
-            c.text(
-                self.fonts.body,
-                body,
-                (px(36.0), top + px(124.0), w - px(72.0), px(44.0)),
-                p.text,
-                DT_CENTER | DT_WORDBREAK,
-            );
-        }
-        c.clip_rect(Some((0, top, w, bottom - top)));
-        let line_h = px(20.0);
-        for (i, card) in self.cards.iter().enumerate() {
-            let y = top + card.y - self.scroll;
-            if y + card.h < top {
-                continue;
+            if let Some((title, body)) = empty {
+                let glyph = if self.page == GIF_TAB { "\u{E76E}" } else { "\u{EB51}" };
+                c.text(self.fonts.icon_large, glyph, (0, top + px(28.0), w, px(56.0)), p.text, DT_C);
+                c.text(self.fonts.title, title, (px(24.0), top + px(98.0), w - px(48.0), px(24.0)), p.text, DT_C);
+                c.text(
+                    self.fonts.body,
+                    body,
+                    (px(36.0), top + px(124.0), w - px(72.0), px(44.0)),
+                    p.text,
+                    DT_CENTER | DT_WORDBREAK,
+                );
             }
-            if y > bottom {
-                break;
-            }
-            let hovered = matches!(self.hover, Hit::Card(k) | Hit::CardButton(k, _) if k == i);
-            let selected = i == self.selected;
-            let fill = if hovered { p.card_hover } else { p.card };
-            c.round_rect(cx as f32, y as f32, cw as f32, card.h as f32, pxf(6.0), fill, 1.0);
-            c.round_rect_outline(cx as f32, y as f32, cw as f32, card.h as f32, pxf(6.0), 1.0, p.card_border, 1.0);
-            if selected && matches!(self.focus, Focus::List | Focus::CardButton(_)) {
-                c.round_rect_outline(cx as f32, y as f32, cw as f32, card.h as f32, pxf(6.0), pxf(2.0), p.accent, 1.0);
-            }
-            let inner_x = cx + px(12.0);
-            let inner_w = cw - px(24.0);
-            let body_y = y + px(12.0);
-            let body_h;
-            if let (Some((iw, ih)), Some(item)) = (card.image, ctx.history.get(card.id)) {
-                if let Some(picture) = &item.content.picture {
-                    // Checkerboard behind transparent pictures, like image viewers.
-                    if !picture.thumb.is_opaque() {
-                        let tile = px(6.0).max(2);
-                        let mut ty = 0;
-                        while ty < ih {
-                            let mut tx = 0;
-                            while tx < iw {
-                                let dark = ((tx / tile) + (ty / tile)) % 2 == 0;
-                                let shade = if dark { mix(fill, 0x808080, 0.25) } else { fill };
-                                c.fill(
-                                    inner_x + tx,
-                                    (body_y + ty).max(top),
-                                    tile.min(iw - tx),
-                                    tile.min(ih - ty),
-                                    shade,
-                                );
-                                tx += tile;
-                            }
-                            ty += tile;
-                        }
-                    }
-                    c.picture(&picture.thumb, inner_x, body_y, iw, ih, top, bottom);
-                    c.round_rect_outline(
-                        inner_x as f32,
-                        body_y as f32,
-                        iw as f32,
-                        ih as f32,
-                        pxf(2.0),
+            for (i, text) in self.cells.iter().enumerate() {
+                let (col, row) = ((i % cols) as i32, (i / cols) as i32);
+                let (x, y) = (cx + col * cell_w, top + row * cell_h - self.scroll);
+                if y + cell_h < top || y > bottom {
+                    continue;
+                }
+                let hot = self.hover == Hit::Cell(i);
+                let selected = self.focus == Focus::List && self.selected == i;
+                if hot || selected {
+                    c.round_rect(
+                        (x + px(2.0)) as f32,
+                        (y + px(2.0)) as f32,
+                        (cell_w - px(4.0)) as f32,
+                        (cell_h - px(4.0)) as f32,
+                        pxf(4.0),
+                        p.control_hover,
                         1.0,
-                        p.card_border,
-                        0.8,
                     );
                 }
-                body_h = ih;
-            } else {
-                let lines = card.preview.lines().count().max(1) as i32;
-                body_h = lines * line_h;
-                let is_files = ctx.history.get(card.id).is_some_and(|it| !it.content.files.is_empty());
-                if is_files {
-                    for (n, name) in card.preview.lines().enumerate() {
-                        let ly = body_y + n as i32 * line_h;
-                        c.text(self.fonts.icon_small, GLYPH_FOLDER, (inner_x, ly, px(16.0), line_h), p.secondary, DT_C);
-                        c.text(
-                            self.fonts.body,
-                            name,
-                            (inner_x + px(22.0), ly, inner_w - px(54.0), line_h),
-                            p.text,
-                            DT_L,
+                if selected {
+                    c.round_rect_outline(
+                        (x + px(2.0)) as f32,
+                        (y + px(2.0)) as f32,
+                        (cell_w - px(4.0)) as f32,
+                        (cell_h - px(4.0)) as f32,
+                        pxf(4.0),
+                        pxf(2.0),
+                        p.accent,
+                        1.0,
+                    );
+                }
+                // The emoji font lacks many symbols; GDI would substitute wrong glyphs.
+                let font = if text.chars().count() > 3 {
+                    self.fonts.body
+                } else if crate::symbols::EMOJI.iter().any(|(e, _)| e == text) {
+                    self.fonts.emoji
+                } else {
+                    self.fonts.symbol
+                };
+                c.text(font, text, (x, y, cell_w, cell_h), p.text, DT_C);
+            }
+        } else {
+            if self.cards.is_empty() {
+                let (title, body) = if ctx.policy_blocked {
+                    ("Clipboard history is off", "Your organization manages this setting.")
+                } else if !ctx.history_enabled {
+                    ("Let's get started", "Turn on clipboard history to copy and view multiple items.")
+                } else if !self.query.is_empty() || self.filter != Filter::All {
+                    ("No matches", "Try another word or filter.")
+                } else {
+                    ("You haven't copied anything yet", "Copy text, links, screenshots or files and they show up here.")
+                };
+                c.text(self.fonts.icon_large, GLYPH_CLIPBOARD, (0, top + px(28.0), w, px(56.0)), p.text, DT_C);
+                c.text(self.fonts.title, title, (px(24.0), top + px(98.0), w - px(48.0), px(24.0)), p.text, DT_C);
+                c.text(
+                    self.fonts.body,
+                    body,
+                    (px(36.0), top + px(124.0), w - px(72.0), px(44.0)),
+                    p.text,
+                    DT_CENTER | DT_WORDBREAK,
+                );
+            }
+            c.clip_rect(Some((0, top, w, bottom - top)));
+            let line_h = px(20.0);
+            for (i, card) in self.cards.iter().enumerate() {
+                let y = top + card.y - self.scroll;
+                if y + card.h < top {
+                    continue;
+                }
+                if y > bottom {
+                    break;
+                }
+                let hovered = matches!(self.hover, Hit::Card(k) | Hit::CardButton(k, _) if k == i);
+                let selected = i == self.selected;
+                let fill = if hovered { p.card_hover } else { p.card };
+                c.round_rect(cx as f32, y as f32, cw as f32, card.h as f32, pxf(6.0), fill, 1.0);
+                c.round_rect_outline(cx as f32, y as f32, cw as f32, card.h as f32, pxf(6.0), 1.0, p.card_border, 1.0);
+                if selected && matches!(self.focus, Focus::List | Focus::CardButton(_)) {
+                    c.round_rect_outline(
+                        cx as f32,
+                        y as f32,
+                        cw as f32,
+                        card.h as f32,
+                        pxf(6.0),
+                        pxf(2.0),
+                        p.accent,
+                        1.0,
+                    );
+                }
+                let inner_x = cx + px(12.0);
+                let inner_w = cw - px(24.0);
+                let body_y = y + px(12.0);
+                let body_h;
+                if let (Some((iw, ih)), Some(item)) = (card.image, ctx.history.get(card.id)) {
+                    if let Some(picture) = &item.content.picture {
+                        // Checkerboard behind transparent pictures, like image viewers.
+                        if !picture.thumb.is_opaque() {
+                            let tile = px(6.0).max(2);
+                            let mut ty = 0;
+                            while ty < ih {
+                                let mut tx = 0;
+                                while tx < iw {
+                                    let dark = ((tx / tile) + (ty / tile)) % 2 == 0;
+                                    let shade = if dark { mix(fill, 0x808080, 0.25) } else { fill };
+                                    c.fill(
+                                        inner_x + tx,
+                                        (body_y + ty).max(top),
+                                        tile.min(iw - tx),
+                                        tile.min(ih - ty),
+                                        shade,
+                                    );
+                                    tx += tile;
+                                }
+                                ty += tile;
+                            }
+                        }
+                        c.picture(&picture.thumb, inner_x, body_y, iw, ih, top, bottom);
+                        c.round_rect_outline(
+                            inner_x as f32,
+                            body_y as f32,
+                            iw as f32,
+                            ih as f32,
+                            pxf(2.0),
+                            1.0,
+                            p.card_border,
+                            0.8,
                         );
                     }
+                    body_h = ih;
                 } else {
+                    let lines = card.preview.lines().count().max(1) as i32;
+                    body_h = lines * line_h;
+                    let is_files = ctx.history.get(card.id).is_some_and(|it| !it.content.files.is_empty());
+                    if is_files {
+                        for (n, name) in card.preview.lines().enumerate() {
+                            let ly = body_y + n as i32 * line_h;
+                            c.text(
+                                self.fonts.icon_small,
+                                GLYPH_FOLDER,
+                                (inner_x, ly, px(16.0), line_h),
+                                p.secondary,
+                                DT_C,
+                            );
+                            c.text(
+                                self.fonts.body,
+                                name,
+                                (inner_x + px(22.0), ly, inner_w - px(54.0), line_h),
+                                p.text,
+                                DT_L,
+                            );
+                        }
+                    } else {
+                        c.text(
+                            self.fonts.body,
+                            &card.preview,
+                            (inner_x, body_y, inner_w - px(32.0), body_h),
+                            p.text,
+                            DT_MULTI,
+                        );
+                    }
+                }
+                // Footer: source app, age; phone and pin markers.
+                let fy = body_y + body_h + px(6.0);
+                let mut fx = inner_x;
+                if card.phone {
+                    c.text(self.fonts.icon_small, GLYPH_PHONE, (fx, fy, px(14.0), px(18.0)), p.accent, DT_C);
+                    fx += px(18.0);
+                }
+                c.text(
+                    self.fonts.small,
+                    &card.footer,
+                    (fx, fy, inner_w - (fx - inner_x) - px(24.0), px(18.0)),
+                    p.tertiary,
+                    DT_L,
+                );
+                if card.pinned {
                     c.text(
-                        self.fonts.body,
-                        &card.preview,
-                        (inner_x, body_y, inner_w - px(32.0), body_h),
-                        p.text,
-                        DT_MULTI,
+                        self.fonts.icon_small,
+                        GLYPH_PINNED,
+                        (inner_x + inner_w - px(16.0), fy, px(16.0), px(18.0)),
+                        p.secondary,
+                        DT_C,
                     );
                 }
             }
-            // Footer: source app, age; phone and pin markers.
-            let fy = body_y + body_h + px(6.0);
-            let mut fx = inner_x;
-            if card.phone {
-                c.text(self.fonts.icon_small, GLYPH_PHONE, (fx, fy, px(14.0), px(18.0)), p.accent, DT_C);
-                fx += px(18.0);
-            }
-            c.text(
-                self.fonts.small,
-                &card.footer,
-                (fx, fy, inner_w - (fx - inner_x) - px(24.0), px(18.0)),
-                p.tertiary,
-                DT_L,
-            );
-            if card.pinned {
-                c.text(
-                    self.fonts.icon_small,
-                    GLYPH_PINNED,
-                    (inner_x + inner_w - px(16.0), fy, px(16.0), px(18.0)),
-                    p.secondary,
-                    DT_C,
-                );
-            }
-        }
 
-        // Card buttons (drawn after the cards so they sit on top).
-        for i in 0..self.cards.len() {
-            let card = &self.cards[i];
-            let y = top + card.y - self.scroll;
-            if y + card.h < top || y > bottom {
-                continue;
-            }
-            let hovered = matches!(self.hover, Hit::Card(k) | Hit::CardButton(k, _) if k == i);
-            let fill = if hovered { p.card_hover } else { p.card };
-            for (slot, button) in self.card_buttons(i).into_iter().enumerate() {
-                let r = self.button_rect(i, slot, ctx);
-                let hot = self.hover == Hit::CardButton(i, button);
-                let focused = i == self.selected && self.focus == Focus::CardButton(button);
-                let c = &mut self.canvas;
-                c.round_rect(
-                    r.0 as f32,
-                    r.1 as f32,
-                    r.2 as f32,
-                    r.3 as f32,
-                    pxf(4.0),
-                    if hot { p.control_hover } else { fill },
-                    1.0,
-                );
-                if focused {
-                    c.round_rect_outline(
+            // Card buttons (drawn after the cards so they sit on top).
+            for i in 0..self.cards.len() {
+                let card = &self.cards[i];
+                let y = top + card.y - self.scroll;
+                if y + card.h < top || y > bottom {
+                    continue;
+                }
+                let hovered = matches!(self.hover, Hit::Card(k) | Hit::CardButton(k, _) if k == i);
+                let fill = if hovered { p.card_hover } else { p.card };
+                for (slot, button) in self.card_buttons(i).into_iter().enumerate() {
+                    let r = self.button_rect(i, slot, ctx);
+                    let hot = self.hover == Hit::CardButton(i, button);
+                    let focused = i == self.selected && self.focus == Focus::CardButton(button);
+                    let c = &mut self.canvas;
+                    c.round_rect(
                         r.0 as f32,
                         r.1 as f32,
                         r.2 as f32,
                         r.3 as f32,
                         pxf(4.0),
-                        pxf(2.0),
-                        p.focus,
+                        if hot { p.control_hover } else { fill },
                         1.0,
                     );
+                    if focused {
+                        c.round_rect_outline(
+                            r.0 as f32,
+                            r.1 as f32,
+                            r.2 as f32,
+                            r.3 as f32,
+                            pxf(4.0),
+                            pxf(2.0),
+                            p.focus,
+                            1.0,
+                        );
+                    }
+                    let glyph = match button {
+                        Button::More => GLYPH_MORE,
+                        Button::Pin if card.pinned => GLYPH_UNPIN,
+                        Button::Pin => GLYPH_PIN,
+                        Button::Delete => GLYPH_DELETE,
+                        Button::Save => GLYPH_SAVE,
+                    };
+                    c.text(self.fonts.icon_small, glyph, r, p.text, DT_C);
                 }
-                let glyph = match button {
-                    Button::More => GLYPH_MORE,
-                    Button::Pin if card.pinned => GLYPH_UNPIN,
-                    Button::Pin => GLYPH_PIN,
-                    Button::Delete => GLYPH_DELETE,
-                    Button::Save => GLYPH_SAVE,
-                };
-                c.text(self.fonts.icon_small, glyph, r, p.text, DT_C);
             }
         }
         let c = &mut self.canvas;

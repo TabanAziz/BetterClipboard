@@ -163,6 +163,7 @@ pub fn search(items: usize, path: &Path) {
             app::with(|a| {
                 let ctx = crate::ui::popup::Context {
                     history: &a.history,
+                    recent: &[],
                     history_enabled: true,
                     paused: false,
                     policy_blocked: false,

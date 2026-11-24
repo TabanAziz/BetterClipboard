@@ -46,7 +46,9 @@ The UI thread never touches clipboard data or the disk. A clipboard owner that h
 - Shortcut through `RegisterHotKey` (default Win+Alt+V). Win+V can only be used after Explorer's own shortcut is switched off through the documented `DisabledHotkeys` value, which applies after signing out. Uninstalling undoes it if BetterClipboard made the change.
 - Tray icon (`Shell_NotifyIconW`, version 4), recreated on `TaskbarCreated`.
 - `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` (out of context) remembers the last real app window, so the panel opened from the tray knows where to paste. No keyboard hooks.
-- Per-user install under `%LOCALAPPDATA%\Programs\BetterClipboard` with a Start menu shortcut (`IShellLinkW`), an "Installed apps" entry and the `Run` key.
+- Per-user install under `%LOCALAPPDATA%\Programs\BetterClipboard` with a Start menu shortcut (`IShellLinkW`), an "Installed apps" entry and the `Run` key. The release ships the same executable a second time as `BetterClipboard-Setup-<version>.exe`; a file name containing "Setup" shows a task dialog (`TaskDialogIndirect`) with the Win+V choice.
+- Emoji, kaomoji and symbols are typed into the previous app with `SendInput` and `KEYEVENTF_UNICODE`, so inserting them never changes the clipboard.
+- The settings window draws its cards, switches and segmented control into the shared canvas; text fields are standard edit controls placed on top.
 
 ## Performance budget
 

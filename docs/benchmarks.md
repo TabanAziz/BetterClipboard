@@ -1,6 +1,6 @@
 # Benchmarks
 
-All numbers below were measured once on one PC for version 0.1.0. They are not averages across machines.
+All numbers below were measured once on one PC with the build of commit ea0e257 (before the emoji pages and the new settings window, which do not touch the measured paths). They are not averages across machines.
 
 ## Reference PC
 

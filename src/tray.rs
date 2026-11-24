@@ -20,6 +20,16 @@ pub mod menu {
     pub const EXIT: usize = 108;
 }
 
+/// The application icon at a given pixel size. The caller destroys it.
+// MAKEINTRESOURCE(1) looks like a dangling pointer to clippy; it is a resource number.
+#[allow(clippy::manual_dangling_ptr)]
+pub fn app_icon(size: i32) -> wm::HICON {
+    unsafe {
+        let id: usize = 1;
+        wm::LoadImageW(GetModuleHandleW(std::ptr::null()), id as *const u16, wm::IMAGE_ICON, size, size, 0) as _
+    }
+}
+
 pub struct Tray {
     window: HWND,
     added: bool,

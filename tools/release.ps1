@@ -51,7 +51,12 @@ try {
     }
 }
 finally { $zip.Dispose() }
-$sum = '{0}  {1}' -f (Get-FileHash $zipFile -Algorithm SHA256).Hash.ToLower(), (Split-Path -Leaf $zipFile)
-[IO.File]::WriteAllText((Join-Path $dist 'SHA256SUMS.txt'), "$sum`n")
+# The setup file is the same program; a name containing "Setup" makes it show the setup dialog.
+$setupFile = Join-Path $dist "BetterClipboard-Setup-$version.exe"
+Copy-Item $app $setupFile -Force
+$sums = foreach ($file in @($setupFile, $zipFile)) {
+    '{0}  {1}' -f (Get-FileHash $file -Algorithm SHA256).Hash.ToLower(), (Split-Path -Leaf $file)
+}
+[IO.File]::WriteAllText((Join-Path $dist 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"))
 "Release $version is in $dist"
-$sum
+$sums

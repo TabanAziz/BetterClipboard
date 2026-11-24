@@ -1,5 +1,6 @@
 //! Windows drawn by BetterClipboard.
 
+pub mod dialogs;
 pub mod gfx;
 pub mod popup;
 pub mod settings_window;

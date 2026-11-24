@@ -314,14 +314,15 @@ pub fn run_message_loop() {
         let mut message: wm::MSG = std::mem::zeroed();
         while wm::GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
             // Tab and Enter navigation in the settings and snippet windows.
-            let (settings, snippet) = settings_window::DIALOGS.with(|d| d.get());
-            let dialog = [settings, snippet]
-                .into_iter()
-                .find(|&w| w != 0 && (message.hwnd as isize == w || wm::IsChild(w as HWND, message.hwnd) != 0));
-            if let Some(w) = dialog {
-                if wm::IsDialogMessageW(w as HWND, &message) != 0 {
-                    continue;
-                }
+            if settings_window::pretranslate(&message) {
+                continue;
+            }
+            let snippet = crate::ui::dialogs::SNIPPET_WINDOW.with(|d| d.get());
+            if snippet != 0
+                && (message.hwnd as isize == snippet || wm::IsChild(snippet as HWND, message.hwnd) != 0)
+                && wm::IsDialogMessageW(snippet as HWND, &message) != 0
+            {
+                continue;
             }
             wm::TranslateMessage(&message);
             wm::DispatchMessageW(&message);
@@ -409,6 +410,7 @@ impl App {
         if self.popup.visible {
             let ctx = Context {
                 history: &self.history,
+                recent: &self.settings.recent,
                 history_enabled: self.settings.history_enabled && !self.policy_blocked,
                 paused: self.settings.paused,
                 policy_blocked: self.policy_blocked,
@@ -439,6 +441,7 @@ impl App {
         });
         let ctx = Context {
             history: &self.history,
+            recent: &self.settings.recent,
             history_enabled: self.settings.history_enabled && !self.policy_blocked,
             paused: self.settings.paused,
             policy_blocked: self.policy_blocked,
@@ -652,6 +655,18 @@ impl App {
                 self.popup.hide();
                 return Some(Outside::Settings);
             }
+            Action::Insert(text) => {
+                self.popup.hide();
+                // Typed as Unicode input, so the clipboard and its history stay untouched.
+                if paste::focus(self.target) && !paste::type_text(&text) {
+                    self.tray
+                        .notify("Could not insert", "Windows blocked the input. The app may run as administrator.");
+                }
+                self.settings.recent.retain(|r| *r != text);
+                self.settings.recent.insert(0, text);
+                self.settings.recent.truncate(crate::settings::RECENT_LIMIT);
+                let _ = self.settings.save(&self.settings_path);
+            }
             Action::EmojiPanel => {
                 self.popup.hide();
                 if paste::focus(self.target) {
@@ -818,7 +833,7 @@ pub fn perform(outside: Option<Outside>) {
             perform(next);
         }
         Outside::Settings => settings_window::open_settings(),
-        Outside::Snippet => settings_window::open_snippet(),
+        Outside::Snippet => crate::ui::dialogs::open_snippet(),
     }
 }
 
@@ -945,8 +960,8 @@ fn save_image(id: u64) {
     .flatten() else {
         return;
     };
-    let suggested = format!("Clipboard {}", crate::ui::settings_window::local_timestamp(created));
-    let chosen = crate::ui::settings_window::save_file_dialog(popup, &suggested);
+    let suggested = format!("Clipboard {}", crate::ui::dialogs::local_timestamp(created));
+    let chosen = crate::ui::dialogs::save_file_dialog(popup, &suggested);
     let jobs_main = with(|app| {
         app.popup.modal = false;
         if app.popup.visible {
@@ -1114,6 +1129,7 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
             with(|app| {
                 let ctx = Context {
                     history: &app.history,
+                    recent: &app.settings.recent,
                     history_enabled: app.settings.history_enabled && !app.policy_blocked,
                     paused: app.settings.paused,
                     policy_blocked: app.policy_blocked,
@@ -1254,6 +1270,7 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
 /// The parts of the panel context that do not borrow the history, so the panel can be
 /// borrowed mutably at the same time.
 pub struct StaticContext {
+    recent: Vec<String>,
     history_enabled: bool,
     paused: bool,
     policy_blocked: bool,
@@ -1265,6 +1282,7 @@ impl StaticContext {
     fn as_context<'a>(&'a self, history: &'a History) -> Context<'a> {
         Context {
             history,
+            recent: &self.recent,
             history_enabled: self.history_enabled,
             paused: self.paused,
             policy_blocked: self.policy_blocked,
@@ -1277,6 +1295,7 @@ impl StaticContext {
 impl App {
     fn context_static(&self) -> StaticContext {
         StaticContext {
+            recent: self.settings.recent.clone(),
             history_enabled: self.settings.history_enabled && !self.policy_blocked,
             paused: self.settings.paused,
             policy_blocked: self.policy_blocked,

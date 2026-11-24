@@ -130,7 +130,7 @@ pub fn stop_running_instance() {
     std::thread::sleep(std::time::Duration::from_millis(150));
 }
 
-pub fn install() -> Result<PathBuf, String> {
+pub fn install(autostart: bool) -> Result<PathBuf, String> {
     let source = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = install_dir();
     let target = dir.join("BetterClipboard.exe");
@@ -169,19 +169,23 @@ pub fn install() -> Result<PathBuf, String> {
     set_number(UNINSTALL_KEY, "NoModify", 1)?;
     set_number(UNINSTALL_KEY, "NoRepair", 1)?;
     set_number(UNINSTALL_KEY, "EstimatedSize", size_kb)?;
-    let run = wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
-    let name = wide("BetterClipboard");
-    let value = wide(&format!("\"{exe}\" --background"));
-    unsafe {
-        RegSetKeyValueW(
-            HKEY_CURRENT_USER,
-            run.as_ptr(),
-            name.as_ptr(),
-            REG_SZ,
-            value.as_ptr() as _,
-            (value.len() * 2) as u32,
-        )
-    };
+    if autostart {
+        let run = wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+        let name = wide("BetterClipboard");
+        let value = wide(&format!("\"{exe}\" --background"));
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                run.as_ptr(),
+                name.as_ptr(),
+                REG_SZ,
+                value.as_ptr() as _,
+                (value.len() * 2) as u32,
+            )
+        };
+    } else {
+        let _ = system::set_autostart(false);
+    }
     Ok(target)
 }
 

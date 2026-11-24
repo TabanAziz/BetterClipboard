@@ -21,7 +21,9 @@ const HELP: &str = "BetterClipboard [option]
 --quit           Quit the running instance
 --use-win-v      Open BetterClipboard with Win+V instead of the Windows panel
 --windows-win-v  Give Win+V back to Windows
+--setup          Show the setup dialog (also when the file is named ...Setup...)
 --install        Install for the current user (Start menu, sign-in start)
+                 add --use-win-v to open it with Win+V, --no-autostart to skip sign-in start
 --uninstall      Remove the installation (--quiet: keep data, no questions)
 --version        Show the version";
 
@@ -65,8 +67,34 @@ fn main() -> ExitCode {
         message(&format!("BetterClipboard {}", bcb::install::VERSION), wm::MB_ICONINFORMATION);
         return ExitCode::SUCCESS;
     }
+    if has("--setup") || (bcb::setup::launched_as_setup() && !has("--install") && !has("--uninstall")) {
+        let Some(choice) = bcb::setup::ask() else { return ExitCode::from(1) };
+        return match bcb::setup::run(&choice) {
+            Ok(message) => {
+                bcb::setup::finished(&message);
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                bcb::setup::failed(&error);
+                ExitCode::from(1)
+            }
+        };
+    }
+    if has("--install") && has("--use-win-v") {
+        // Unattended install with Win+V: --install --use-win-v [--no-autostart]
+        let choice = bcb::setup::Choice { win_v: true, autostart: !has("--no-autostart") };
+        return match bcb::setup::run(&choice) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(error) => {
+                if !has("--quiet") {
+                    message(&error, wm::MB_ICONERROR);
+                }
+                ExitCode::from(1)
+            }
+        };
+    }
     if has("--install") {
-        return match bcb::install::install() {
+        return match bcb::install::install(!has("--no-autostart")) {
             Ok(target) => {
                 let _ = std::process::Command::new(&target).spawn();
                 if !has("--quiet") {
