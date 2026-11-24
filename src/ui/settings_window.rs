@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForSystem, GetDpiForWindow};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, GetKeyState, SetFocus, VK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 
@@ -27,6 +27,7 @@ thread_local! {
 
 const WIDTH_DIP: f32 = 700.0;
 const HEIGHT_DIP: f32 = 780.0;
+const WINDOW_STYLE: u32 = wm::WS_OVERLAPPEDWINDOW | wm::WS_CLIPCHILDREN;
 const THEME_COLUMNS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -67,6 +68,7 @@ enum Command {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Control {
+    Back,
     Switch(Switch),
     Field(Field),
     Theme(Theme),
@@ -156,16 +158,20 @@ struct Card {
     section_y: Option<i32>,
     control: (i32, i32, i32, i32),
     description: String,
+    description_h: i32,
     error: Option<String>,
 }
 
 struct SettingsUi {
     window: HWND,
     canvas: Canvas,
+    icon: wm::HICON,
     fonts: Fonts,
     scale: f32,
     palette: Palette,
     theme_previews: [Palette; Theme::ALL.len()],
+    preview_art: Option<Canvas>,
+    from_panel: bool,
     field_brush: HBRUSH,
     edits: Vec<(Field, HWND)>,
     rows: Vec<Row>,
@@ -180,10 +186,12 @@ struct SettingsUi {
     autostart: bool,
     notice: Option<String>,
     policy_blocked: bool,
+    windows_clipboard: (Option<bool>, Option<bool>),
 }
 
 /// Work that must run after the state borrow ends (message boxes, other windows).
 enum Deferred {
+    Back,
     Toggle(Switch),
     Theme(Theme),
     Command(Command),
@@ -207,10 +215,39 @@ fn field_text(settings: &Settings, field: Field) -> String {
     }
 }
 
-pub fn open_settings() {
-    if let Some(window) = with_ui(|ui| ui.window) {
+fn window_size(dpi: u32) -> (i32, i32) {
+    let scale = dpi as f32 / 96.0;
+    let mut frame = RECT {
+        left: 0,
+        top: 0,
+        right: (WIDTH_DIP * scale).round() as i32,
+        bottom: (HEIGHT_DIP * scale).round() as i32,
+    };
+    unsafe { AdjustWindowRectExForDpi(&mut frame, WINDOW_STYLE, 0, 0, dpi) };
+    (frame.right - frame.left, frame.bottom - frame.top)
+}
+
+fn windows_clipboard_status() -> (Option<bool>, Option<bool>) {
+    (system::windows_history_enabled(), system::windows_cloud_sync_enabled())
+}
+
+pub fn open_settings(from_panel: bool) {
+    if let Some(window) = with_ui(|ui| {
+        let mode_changed = ui.from_panel != from_panel;
+        ui.from_panel = from_panel;
+        if unsafe { wm::IsWindowVisible(ui.window) } == 0 {
+            ui.reset_for_open(mode_changed);
+        } else {
+            if mode_changed && ui.focus == Some(Control::Back) {
+                ui.focus = None;
+            }
+            ui.refresh_from_app(mode_changed);
+        }
+        ui.window
+    }) {
         unsafe {
-            wm::ShowWindow(window, wm::SW_SHOWNORMAL);
+            let show = if wm::IsIconic(window) != 0 { wm::SW_RESTORE } else { wm::SW_SHOW };
+            wm::ShowWindow(window, show);
             wm::SetForegroundWindow(window);
         }
         return;
@@ -218,16 +255,18 @@ pub fn open_settings() {
     let Some((settings, notice)) = app::with(|a| (a.settings.clone(), a.notice.clone())) else { return };
     let class = format!("BetterClipboard.Settings{}", util::profile());
     dialogs::register(&class, Some(settings_proc));
+    let initial_dpi = unsafe { GetDpiForSystem() }.max(96);
+    let (w, h) = window_size(initial_dpi);
     let window = unsafe {
         wm::CreateWindowExW(
             0,
             wide(&class).as_ptr(),
             wide("BetterClipboard Settings").as_ptr(),
-            wm::WS_OVERLAPPEDWINDOW | wm::WS_CLIPCHILDREN,
+            WINDOW_STYLE,
             wm::CW_USEDEFAULT,
             wm::CW_USEDEFAULT,
-            100,
-            100,
+            w,
+            h,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             GetModuleHandleW(std::ptr::null()),
@@ -262,10 +301,13 @@ pub fn open_settings() {
     let mut ui = SettingsUi {
         window,
         canvas: Canvas::new(),
+        icon: crate::tray::app_icon((40.0 * scale).round() as i32),
         fonts: Fonts::new(scale),
         scale,
         palette,
         theme_previews,
+        preview_art: None,
+        from_panel,
         field_brush: unsafe { CreateSolidBrush(gfx::cr(palette.field)) },
         edits,
         rows: rows(),
@@ -275,27 +317,17 @@ pub fn open_settings() {
         hover: None,
         focus: None,
         errors: Vec::new(),
-        win_v: system::windows_win_v_disabled() && settings.hotkey == Hotkey::WIN_V,
+        win_v: settings.hotkey == Hotkey::WIN_V && system::windows_win_v_disabled(),
         autostart: system::autostart_enabled(),
         settings,
         notice,
         policy_blocked: system::history_blocked_by_policy(),
+        windows_clipboard: windows_clipboard_status(),
     };
     ui.apply_fonts();
-    unsafe {
-        let (w, h) = (ui.px(WIDTH_DIP), ui.px(HEIGHT_DIP));
-        let mut frame = RECT { left: 0, top: 0, right: w, bottom: h };
-        let style = wm::GetWindowLongW(window, wm::GWL_STYLE) as u32;
-        windows_sys::Win32::UI::HiDpi::AdjustWindowRectExForDpi(&mut frame, style, 0, 0, dpi);
-        wm::SetWindowPos(
-            window,
-            std::ptr::null_mut(),
-            0,
-            0,
-            frame.right - frame.left,
-            frame.bottom - frame.top,
-            wm::SWP_NOMOVE | wm::SWP_NOZORDER,
-        );
+    if dpi != initial_dpi {
+        let (w, h) = window_size(dpi);
+        unsafe { wm::SetWindowPos(window, std::ptr::null_mut(), 0, 0, w, h, wm::SWP_NOMOVE | wm::SWP_NOZORDER) };
     }
     ui.layout();
     UI.with(|cell| *cell.borrow_mut() = Some(ui));
@@ -323,17 +355,53 @@ impl SettingsUi {
         }
     }
 
-    fn refresh_from_app(&mut self) {
-        if let Some((settings, notice)) = app::with(|a| (a.settings.clone(), a.notice.clone())) {
-            let theme_changed = settings.theme != self.settings.theme;
-            self.settings = settings;
-            self.notice = notice;
-            if theme_changed {
-                self.set_palette();
+    fn reset_for_open(&mut self, mode_changed: bool) {
+        self.focus = None;
+        self.hover = None;
+        let needs_layout = mode_changed || !self.errors.is_empty();
+        let was_scrolled = self.scroll != 0;
+        self.scroll = 0;
+        self.errors.clear();
+        if !self.refresh_from_app(needs_layout) && was_scrolled {
+            self.place_edits();
+        }
+        for (field, edit) in &self.edits {
+            let expected = field_text(&self.settings, *field);
+            if text_of(self.window, field.id()) != expected {
+                unsafe { wm::SetWindowTextW(*edit, wide(&expected).as_ptr()) };
             }
         }
-        self.win_v = system::windows_win_v_disabled() && self.settings.hotkey == Hotkey::WIN_V;
-        self.autostart = system::autostart_enabled();
+        unsafe { InvalidateRect(self.window, std::ptr::null(), 0) };
+    }
+
+    fn refresh_from_app(&mut self, force_layout: bool) -> bool {
+        let Some((settings, notice)) = app::with(|a| (a.settings.clone(), a.notice.clone())) else {
+            return false;
+        };
+        let win_v = settings.hotkey == Hotkey::WIN_V && system::windows_win_v_disabled();
+        let autostart = system::autostart_enabled();
+        let policy_blocked = system::history_blocked_by_policy();
+        let windows_clipboard = windows_clipboard_status();
+        if !force_layout
+            && self.settings == settings
+            && self.notice == notice
+            && self.win_v == win_v
+            && self.autostart == autostart
+            && self.policy_blocked == policy_blocked
+            && self.windows_clipboard == windows_clipboard
+        {
+            return false;
+        }
+        let theme_changed = self.settings.theme != settings.theme;
+        self.settings = settings;
+        self.notice = notice;
+        self.win_v = win_v;
+        self.autostart = autostart;
+        self.policy_blocked = policy_blocked;
+        self.windows_clipboard = windows_clipboard;
+        if theme_changed {
+            self.set_palette();
+        }
         for (field, edit) in &self.edits {
             // A field with an error keeps what the user typed until it is fixed.
             let has_error = self.errors.iter().any(|(f, _)| f == field);
@@ -342,6 +410,7 @@ impl SettingsUi {
             }
         }
         self.layout();
+        true
     }
 
     fn set_palette(&mut self) {
@@ -353,20 +422,11 @@ impl SettingsUi {
             for (_, edit) in &self.edits {
                 InvalidateRect(*edit, std::ptr::null(), 1);
             }
+            InvalidateRect(self.window, std::ptr::null(), 0);
         }
     }
 
     fn description(&self, row: &Row) -> String {
-        let windows = match system::windows_history_enabled() {
-            Some(true) => "on",
-            Some(false) => "off",
-            None => "not set",
-        };
-        let sync = match system::windows_cloud_sync_enabled() {
-            Some(true) => "on",
-            Some(false) => "off",
-            None => "not set",
-        };
         match &row.kind {
             Kind::Switch(Switch::History) if self.policy_blocked => "Turned off by your organization.".into(),
             Kind::Switch(Switch::History) => format!(
@@ -399,6 +459,13 @@ impl SettingsUi {
                 "Turn on \"Cross-device copy and paste\" in Phone Link. What you copy on your Android phone then shows up here with a phone icon.".into()
             }
             Kind::Button(Command::WindowsSettings, _) => {
+                let state = |enabled| match enabled {
+                    Some(true) => "on",
+                    Some(false) => "off",
+                    None => "not set",
+                };
+                let windows = state(self.windows_clipboard.0);
+                let sync = state(self.windows_clipboard.1);
                 format!("Windows clipboard history is {windows}, sync across your devices is {sync}.")
             }
             Kind::Button(Command::Snippet, _) => "Type text to keep as a pinned item.".into(),
@@ -441,8 +508,14 @@ impl SettingsUi {
     fn content_x(&self) -> (i32, i32) {
         let (w, _) = self.client();
         let margin = self.px(32.0);
-        let width = (w - 2 * margin).min(self.px(1000.0));
-        (((w - width) / 2).max(margin.min(w / 2)), width.max(self.px(200.0)))
+        let extra = if self.from_panel { self.px(16.0) } else { 0 };
+        let width = (w - 2 * margin - extra).min(self.px(1000.0));
+        (((w + extra - width) / 2).max((margin + extra).min(w / 2)), width.max(self.px(200.0)))
+    }
+
+    fn back_rect(&self) -> (i32, i32, i32, i32) {
+        let (x, _) = self.content_x();
+        (x - self.px(42.0), self.px(28.0), self.px(34.0), self.px(34.0))
     }
 
     fn header_h(&self) -> i32 {
@@ -492,7 +565,16 @@ impl SettingsUi {
                 Kind::Theme => (x + self.px(16.0), control_y, width - self.px(32.0), ch),
                 _ => (x + width - self.px(20.0) - cw, control_y, cw, ch),
             };
-            cards.push(Card { row: index, y, h: card_h, section_y, control, description, error });
+            cards.push(Card {
+                row: index,
+                y,
+                h: card_h,
+                section_y,
+                control,
+                description,
+                description_h: desc_h,
+                error,
+            });
             y += card_h + gap;
         }
         y += self.px(16.0);
@@ -528,14 +610,17 @@ impl SettingsUi {
     }
 
     fn control_at(&self, x: i32, y: i32) -> Option<Control> {
+        let (back_x, back_y, back_w, back_h) = self.back_rect();
+        if self.from_panel && x >= back_x && x < back_x + back_w && y >= back_y && y < back_y + back_h {
+            return Some(Control::Back);
+        }
         let y = y + self.scroll;
+        let (card_x, width) = self.content_x();
         for card in &self.cards {
             let (cx, cy, cw, ch) = card.control;
             let inside = x >= cx && x < cx + cw && y >= cy && y < cy + ch;
             match self.rows[card.row].kind {
                 Kind::Switch(s) => {
-                    let (_, width) = self.content_x();
-                    let (card_x, _) = self.content_x();
                     // The whole card toggles, like in Windows Settings.
                     if y >= card.y && y < card.y + card.h && x >= card_x && x < card_x + width {
                         return Some(Control::Switch(s));
@@ -557,14 +642,15 @@ impl SettingsUi {
 
     /// Controls in Tab order.
     fn focusables(&self) -> Vec<Control> {
-        self.rows
-            .iter()
-            .map(|row| match row.kind {
+        self.from_panel
+            .then_some(Control::Back)
+            .into_iter()
+            .chain(self.rows.iter().map(|row| match row.kind {
                 Kind::Switch(s) => Control::Switch(s),
                 Kind::Field(f, _) | Kind::List(f) => Control::Field(f),
                 Kind::Theme => Control::Theme(self.settings.theme),
                 Kind::Button(c, _) => Control::Button(c),
-            })
+            }))
             .collect()
     }
 
@@ -632,6 +718,27 @@ impl SettingsUi {
         unsafe { InvalidateRect(self.window, std::ptr::null(), 0) };
     }
 
+    fn cache_theme_art(&mut self, height: i32) {
+        let Some(card) = self.cards.iter().find(|card| matches!(self.rows[card.row].kind, Kind::Theme)) else {
+            return;
+        };
+        let (_, _, width, grid_h) = card.control;
+        let y = card.y - self.scroll;
+        if y >= height || y + card.h <= 0 {
+            return;
+        }
+        if self.preview_art.as_ref().is_some_and(|c| c.w == width && c.h == grid_h) {
+            return;
+        }
+        let mut art = self.preview_art.take().unwrap_or_default();
+        art.ensure(width, grid_h);
+        for (index, (theme, preview)) in Theme::ALL.into_iter().zip(self.theme_previews).enumerate() {
+            let cell = theme_cell((0, 0, width, grid_h), index, self.px(8.0));
+            paint_theme_sample(&mut art, theme_sample(cell, self.scale), self.scale, theme, preview);
+        }
+        self.preview_art = Some(art);
+    }
+
     fn paint(&mut self, dc: HDC) {
         let (w, h) = self.client();
         self.canvas.ensure(w, h);
@@ -641,6 +748,8 @@ impl SettingsUi {
         let pxf = |dip: f32| dip * s;
         let (x, width) = self.content_x();
         let scroll = self.scroll;
+        let back_rect = self.from_panel.then(|| self.back_rect());
+        self.cache_theme_art(h);
         let (card_fill, card_hover) = if self.settings.theme.is_custom() || p.contrast {
             (p.card, p.card_hover)
         } else if p.dark {
@@ -668,16 +777,26 @@ impl SettingsUi {
             c.fill(0, -scroll, w, px(92.0), p.header);
             paint_motif(c.hdc, (x + px(292.0), top, width - px(292.0), px(40.0)), self.settings.theme, p);
         }
-        let icon = crate::tray::app_icon(px(40.0));
-        if !icon.is_null() {
-            unsafe {
-                wm::DrawIconEx(c.hdc, x, top, icon, px(40.0), px(40.0), 0, std::ptr::null_mut(), wm::DI_NORMAL);
-                wm::DestroyIcon(icon);
+        if top + px(48.0) > 0 {
+            if !self.icon.is_null() {
+                unsafe {
+                    wm::DrawIconEx(
+                        c.hdc,
+                        x,
+                        top,
+                        self.icon,
+                        px(40.0),
+                        px(40.0),
+                        0,
+                        std::ptr::null_mut(),
+                        wm::DI_NORMAL,
+                    );
+                }
             }
+            c.text(self.fonts.page, "BetterClipboard", (x + px(56.0), top - px(4.0), width, px(36.0)), p.text, DT_L);
+            let version = format!("Version {} \u{00B7} clipboard history for Windows", crate::install::VERSION);
+            c.text(self.fonts.caption, &version, (x + px(56.0), top + px(30.0), width, px(18.0)), p.secondary, DT_L);
         }
-        c.text(self.fonts.page, "BetterClipboard", (x + px(56.0), top - px(4.0), width, px(36.0)), p.text, DT_L);
-        let version = format!("Version {} \u{00B7} clipboard history for Windows", crate::install::VERSION);
-        c.text(self.fonts.caption, &version, (x + px(56.0), top + px(30.0), width, px(18.0)), p.secondary, DT_L);
 
         // Info bar for problems with the shortcut and similar notices.
         if let Some(notice) = &self.notice {
@@ -698,7 +817,9 @@ impl SettingsUi {
             let row = &self.rows[card.row];
             if let (Some(section), Some(sy)) = (row.section, card.section_y) {
                 let sy = sy - scroll;
-                c.text(self.fonts.section, section, (x + px(2.0), sy, width, px(28.0)), p.text, DT_L);
+                if sy < h && sy + px(28.0) > 0 {
+                    c.text(self.fonts.section, section, (x + px(2.0), sy, width, px(28.0)), p.text, DT_L);
+                }
             }
             let y = card.y - scroll;
             if y > h || y + card.h < 0 {
@@ -736,23 +857,7 @@ impl SettingsUi {
             let cy = cy - scroll;
             let text_right = if stacked { x + width - px(16.0) } else { cx - px(16.0) };
             let text_w = text_right - (x + px(68.0));
-            let desc_h = {
-                let units: Vec<u16> = card.description.encode_utf16().collect();
-                let mut r = RECT { left: 0, top: 0, right: text_w.max(1), bottom: 0 };
-                if !units.is_empty() {
-                    unsafe {
-                        SelectObject(c.hdc, self.fonts.caption);
-                        DrawTextW(
-                            c.hdc,
-                            units.as_ptr(),
-                            units.len() as i32,
-                            &mut r,
-                            DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
-                        );
-                    }
-                }
-                r.bottom - r.top
-            };
+            let desc_h = card.description_h;
             let error_h = card.error.as_ref().map_or(0, |_| px(20.0));
             let block_h = px(20.0) + desc_h + error_h;
             let ty = if stacked { y + px(14.0) } else { y + (card.h - block_h) / 2 };
@@ -856,7 +961,11 @@ impl SettingsUi {
                 }
                 Kind::Theme => {
                     for (i, (theme, preview)) in Theme::ALL.into_iter().zip(self.theme_previews).enumerate() {
-                        let (tx, ty, tw, th) = theme_cell((cx, cy, cw, ch), i, px(8.0));
+                        let cell = theme_cell((cx, cy, cw, ch), i, px(8.0));
+                        let (tx, ty, tw, th) = cell;
+                        if ty >= h || ty + th <= 0 {
+                            continue;
+                        }
                         let selected = theme == self.settings.theme;
                         let focused = focused(Control::Theme(theme));
                         let hot = self.hover == Some(Control::Theme(theme));
@@ -870,14 +979,14 @@ impl SettingsUi {
                         let stroke = if selected || focused { pxf(2.0) } else { pxf(1.0) };
                         c.round_rect(tx as f32, ty as f32, tw as f32, th as f32, pxf(5.0), preview.card, 1.0);
                         c.round_rect_outline(tx as f32, ty as f32, tw as f32, th as f32, pxf(5.0), stroke, frame, 1.0);
-                        let (ax, ay, aw) = (tx + px(5.0), ty + px(5.0), tw - px(10.0));
-                        let ah = th - px(29.0);
-                        c.fill(ax, ay, aw, ah, preview.header);
-                        // A few sample controls show the theme's surface and accent colours.
-                        c.fill(ax + px(6.0), ay + px(6.0), px(30.0), ah - px(12.0), preview.field);
-                        c.fill(ax + px(9.0), ay + px(9.0), px(13.0), px(2.0), preview.secondary);
-                        c.fill(ax + px(9.0), ay + px(14.0), px(21.0), px(3.0), preview.accent);
-                        paint_motif(c.hdc, (ax + px(38.0), ay, aw - px(38.0), ah), theme, preview);
+                        let sample = theme_sample(cell, s);
+                        let (ax, ay, aw, ah) = sample;
+                        let copied = self.preview_art.as_ref().is_some_and(|art| unsafe {
+                            BitBlt(c.hdc, ax, ay, aw, ah, art.hdc, ax - cx, ay - cy, SRCCOPY) != 0
+                        });
+                        if !copied {
+                            paint_theme_sample(c, sample, s, theme, preview);
+                        }
                         c.text(
                             self.fonts.body,
                             theme.label(),
@@ -937,14 +1046,25 @@ impl SettingsUi {
             }
         }
 
-        // Session counters at the end of the page.
-        let stats = app::with(|a| a.stats).unwrap_or_default();
-        let line = format!(
-            "This session: {} recorded, {} skipped as private, {} from excluded apps, {} too large.",
-            stats.captured, stats.skipped_private, stats.skipped_excluded, stats.skipped_large
-        );
         let footer_y = self.content_h - px(40.0) - scroll;
-        c.text(self.fonts.caption, &line, (x + px(2.0), footer_y, width, px(20.0)), p.tertiary, DT_L);
+        if footer_y < h && footer_y + px(20.0) > 0 {
+            let stats = app::with(|a| a.stats).unwrap_or_default();
+            let line = format!(
+                "This session: {} recorded, {} skipped as private, {} from excluded apps, {} too large.",
+                stats.captured, stats.skipped_private, stats.skipped_excluded, stats.skipped_large
+            );
+            c.text(self.fonts.caption, &line, (x + px(2.0), footer_y, width, px(20.0)), p.tertiary, DT_L);
+        }
+
+        if let Some((bx, by, bw, bh)) = back_rect {
+            let (fx, fy, fw, fh) = (bx as f32, by as f32, bw as f32, bh as f32);
+            let fill = if self.hover == Some(Control::Back) { p.control_hover } else { p.card };
+            c.round_rect(fx, fy, fw, fh, pxf(5.0), fill, 1.0);
+            let (stroke, frame) =
+                if self.focus == Some(Control::Back) { (pxf(2.0), p.focus) } else { (1.0, p.card_border) };
+            c.round_rect_outline(fx, fy, fw, fh, pxf(5.0), stroke, frame, 1.0);
+            c.text(self.fonts.icon, "\u{E72B}", (bx, by, bw, bh), p.text, DT_C);
+        }
 
         // Scrollbar.
         if self.content_h > h {
@@ -987,6 +1107,20 @@ fn theme_cell(grid: (i32, i32, i32, i32), index: usize, gap: i32) -> (i32, i32, 
     (x + left, y + top, offset(w, col + 1, cols) - left - gap, offset(h, row + 1, rows) - top - gap)
 }
 
+fn theme_sample((x, y, w, h): (i32, i32, i32, i32), scale: f32) -> (i32, i32, i32, i32) {
+    let px = |dip: f32| (dip * scale).round() as i32;
+    (x + px(5.0), y + px(5.0), w - px(10.0), h - px(29.0))
+}
+
+fn paint_theme_sample(canvas: &mut Canvas, (x, y, w, h): (i32, i32, i32, i32), scale: f32, theme: Theme, p: Palette) {
+    let px = |dip: f32| (dip * scale).round() as i32;
+    canvas.fill(x, y, w, h, p.header);
+    canvas.fill(x + px(6.0), y + px(6.0), px(30.0), h - px(12.0), p.field);
+    canvas.fill(x + px(9.0), y + px(9.0), px(13.0), px(2.0), p.secondary);
+    canvas.fill(x + px(9.0), y + px(14.0), px(21.0), px(3.0), p.accent);
+    paint_motif(canvas.hdc, (x + px(38.0), y, w - px(38.0), h), theme, p);
+}
+
 fn adjacent_theme(theme: Theme, key: u16) -> Theme {
     let index = theme_index(theme);
     let col = index % THEME_COLUMNS;
@@ -1007,7 +1141,7 @@ fn change(mutate: impl FnOnce(&mut Settings)) {
         mutate(&mut next);
         a.apply_settings(next);
     });
-    with_ui(SettingsUi::refresh_from_app);
+    with_ui(|ui| ui.refresh_from_app(true));
 }
 
 fn owner() -> HWND {
@@ -1016,10 +1150,22 @@ fn owner() -> HWND {
 
 fn run(deferred: Deferred) {
     match deferred {
+        Deferred::Back => {
+            commit_focused_field();
+            app::with(app::App::resume_popup);
+            close();
+        }
         Deferred::Toggle(switch) => toggle(switch),
         Deferred::Theme(theme) => {
             app::with(|a| a.set_theme(theme));
-            with_ui(SettingsUi::refresh_from_app);
+            with_ui(|ui| {
+                if ui.settings.theme != theme {
+                    ui.settings.theme = theme;
+                    ui.set_palette();
+                } else {
+                    unsafe { InvalidateRect(ui.window, std::ptr::null(), 0) };
+                }
+            });
         }
         Deferred::Command(command) => run_command(command),
         Deferred::Commit(field) => commit(field),
@@ -1049,7 +1195,7 @@ fn toggle(switch: Switch) {
             if let Err(error) = system::set_autostart(!on) {
                 message_box(owner(), &error, wm::MB_ICONWARNING);
             }
-            with_ui(SettingsUi::refresh_from_app);
+            with_ui(|ui| ui.refresh_from_app(false));
         }
         Switch::WinV => set_win_v(!on, owner(), true),
     }
@@ -1136,7 +1282,7 @@ fn commit(field: Field) {
             if next != current {
                 app::with(|a| a.apply_settings(next));
             }
-            with_ui(SettingsUi::refresh_from_app);
+            with_ui(|ui| ui.refresh_from_app(true));
         }
         Err(message) => {
             with_ui(|ui| {
@@ -1149,14 +1295,28 @@ fn commit(field: Field) {
 }
 
 fn close() {
-    if let Some(ui) = UI.with(|cell| cell.borrow_mut().take()) {
+    with_ui(|ui| unsafe { wm::ShowWindow(ui.window, wm::SW_HIDE) });
+}
+
+pub fn destroy() {
+    if let Some(ui) = UI.with(|cell| cell.try_borrow_mut().ok()?.take()) {
         unsafe {
             wm::DestroyWindow(ui.window);
             DeleteObject(ui.field_brush);
+            SelectObject(ui.canvas.hdc, GetStockObject(DEFAULT_GUI_FONT));
+            if !ui.icon.is_null() {
+                wm::DestroyIcon(ui.icon);
+            }
         }
         ui.fonts.release();
     }
-    app::with(|a| a.settings_window = std::ptr::null_mut());
+}
+
+fn commit_focused_field() {
+    let field = with_ui(|ui| ui.edits.iter().find(|(_, e)| *e == unsafe { GetFocus() }).map(|(f, _)| *f)).flatten();
+    if let Some(field) = field {
+        commit(field);
+    }
 }
 
 /// Keyboard handling for the settings window, called from the message loop before
@@ -1197,6 +1357,7 @@ pub fn pretranslate(message: &wm::MSG) -> bool {
         0x0D | 0x20 if !in_edit => {
             let focus = with_ui(|ui| ui.focus).flatten();
             match focus {
+                Some(Control::Back) => run(Deferred::Back),
                 Some(Control::Switch(s)) => run(Deferred::Toggle(s)),
                 Some(Control::Theme(theme)) => run(Deferred::Theme(theme)),
                 Some(Control::Button(c)) => run(Deferred::Command(c)),
@@ -1240,7 +1401,13 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
         }
         wm::WM_ERASEBKGND => 1,
         wm::WM_SIZE => {
-            with_ui(SettingsUi::layout);
+            if wparam as u32 != wm::SIZE_MINIMIZED {
+                with_ui(|ui| {
+                    if ui.client() != (ui.canvas.w, ui.canvas.h) {
+                        ui.layout();
+                    }
+                });
+            }
             0
         }
         wm::WM_GETMINMAXINFO => {
@@ -1286,6 +1453,7 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
                 let control = ui.control_at(x, y)?;
                 ui.focus = Some(control);
                 match control {
+                    Control::Back => Some(Deferred::Back),
                     Control::Switch(s) => {
                         SetFocus(hwnd);
                         Some(Deferred::Toggle(s))
@@ -1343,8 +1511,9 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
         wm::WM_SETTINGCHANGE | wm::WM_SYSCOLORCHANGE => {
             with_ui(|ui| {
                 ui.theme_previews = theme::preview_palettes();
+                ui.preview_art = None;
                 ui.set_palette();
-                ui.layout();
+                ui.refresh_from_app(true);
             });
             0
         }
@@ -1352,36 +1521,39 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             let dpi = (wparam & 0xFFFF) as u32;
             let r = *(lparam as *const RECT);
             with_ui(|ui| {
-                ui.fonts.release();
                 ui.scale = dpi as f32 / 96.0;
-                ui.fonts = Fonts::new(ui.scale);
+                let old_fonts = std::mem::replace(&mut ui.fonts, Fonts::new(ui.scale));
                 ui.apply_fonts();
+                SelectObject(ui.canvas.hdc, GetStockObject(DEFAULT_GUI_FONT));
+                old_fonts.release();
+                if !ui.icon.is_null() {
+                    wm::DestroyIcon(ui.icon);
+                }
+                ui.icon = crate::tray::app_icon(ui.px(40.0));
+                ui.preview_art = None;
+                wm::SetWindowPos(
+                    hwnd,
+                    std::ptr::null_mut(),
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    wm::SWP_NOZORDER | wm::SWP_NOACTIVATE,
+                );
+                ui.layout();
             });
-            wm::SetWindowPos(
-                hwnd,
-                std::ptr::null_mut(),
-                r.left,
-                r.top,
-                r.right - r.left,
-                r.bottom - r.top,
-                wm::SWP_NOZORDER | wm::SWP_NOACTIVATE,
-            );
-            with_ui(SettingsUi::layout);
             0
         }
         wm::WM_ACTIVATE => {
             // Settings may have changed from the tray or panel while this window was open.
             if (wparam & 0xFFFF) as u32 != wm::WA_INACTIVE {
-                with_ui(SettingsUi::refresh_from_app);
+                with_ui(|ui| ui.refresh_from_app(false));
             }
             wm::DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         wm::WM_CLOSE => {
             // Apply a field that still has the focus before closing.
-            let field = with_ui(|ui| ui.edits.iter().find(|(_, e)| *e == GetFocus()).map(|(f, _)| *f)).flatten();
-            if let Some(field) = field {
-                commit(field);
-            }
+            commit_focused_field();
             close();
             0
         }

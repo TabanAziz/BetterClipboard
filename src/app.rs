@@ -472,6 +472,11 @@ impl App {
         self.popup.show(anchor, below, opened == Opened::Tray, &ctx);
     }
 
+    pub fn resume_popup(&mut self) {
+        let ctx = self.context_static();
+        self.popup.resume(&ctx.as_context(&self.history));
+    }
+
     fn schedule_save(&self) {
         unsafe { wm::SetTimer(self.main, SAVE_TIMER, 400, None) };
     }
@@ -696,7 +701,7 @@ impl App {
             Action::ClearAll => self.clear_all(false),
             Action::OpenSettings => {
                 self.popup.hide();
-                return Some(Outside::Settings);
+                return Some(Outside::Settings { from_panel: true });
             }
             Action::Insert(text) => {
                 self.popup.hide();
@@ -843,7 +848,7 @@ impl App {
             }
             tray::menu::CLEAR => self.clear_all(false),
             tray::menu::SNIPPET => return Some(Outside::Snippet),
-            tray::menu::SETTINGS => return Some(Outside::Settings),
+            tray::menu::SETTINGS => return Some(Outside::Settings { from_panel: false }),
             tray::menu::PHONE_LINK => {
                 if !system::open("ms-phone:") {
                     system::open("ms-settings:mobile-devices");
@@ -861,6 +866,7 @@ impl App {
     }
 
     fn shutdown(&mut self) {
+        settings_window::destroy();
         unsafe { UnregisterHotKey(self.main, HOTKEY_ID) };
         self.tray.remove();
         self.save_now();
@@ -879,7 +885,7 @@ pub enum Outside {
     ItemMenu { id: u64, x: i32, y: i32 },
     SaveImage(u64),
     TrayMenu { x: i32, y: i32 },
-    Settings,
+    Settings { from_panel: bool },
     Snippet,
 }
 
@@ -904,7 +910,7 @@ pub fn perform(outside: Option<Outside>) {
             let next = with(|app| app.on_tray_command(command)).flatten();
             perform(next);
         }
-        Outside::Settings => settings_window::open_settings(),
+        Outside::Settings { from_panel } => settings_window::open_settings(from_panel),
         Outside::Snippet => crate::ui::dialogs::open_snippet(),
     }
 }
@@ -1117,7 +1123,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 Some(Remote::Show) => {
                     with(|app| app.show_popup(Opened::Command));
                 }
-                Some(Remote::Settings) => perform(Some(Outside::Settings)),
+                Some(Remote::Settings) => perform(Some(Outside::Settings { from_panel: false })),
                 Some(Remote::Snippet) => perform(Some(Outside::Snippet)),
                 Some(Remote::Quit) => {
                     wm::DestroyWindow(hwnd);

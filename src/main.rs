@@ -222,7 +222,7 @@ fn main() -> ExitCode {
         bcb::bench::record_hotkeys();
     }
     match remote {
-        Some(Remote::Settings) => app::perform(Some(app::Outside::Settings)),
+        Some(Remote::Settings) => app::perform(Some(app::Outside::Settings { from_panel: false })),
         Some(Remote::Snippet) => app::perform(Some(app::Outside::Snippet)),
         Some(Remote::Show) => {
             app::with(|a| a.show_popup(app::Opened::Command));

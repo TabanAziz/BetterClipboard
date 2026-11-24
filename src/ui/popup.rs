@@ -388,6 +388,19 @@ impl Popup {
         }
     }
 
+    /// Restores the panel where it was before opening Settings, with the same search and selection.
+    pub fn resume(&mut self, ctx: &Context) {
+        self.rebuild(ctx);
+        self.visible = true;
+        unsafe {
+            wm::ShowWindow(self.hwnd, wm::SW_SHOW);
+            wm::SetForegroundWindow(self.hwnd);
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.hwnd);
+        }
+        self.invalidate();
+        self.announce(ctx);
+    }
+
     pub fn show_toast(&mut self, text: &str, now: i64) {
         self.toast = Some((text.to_string(), now + 2500));
         self.invalidate();

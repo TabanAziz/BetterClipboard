@@ -208,8 +208,27 @@ pub fn open(target: &str) -> bool {
     result as isize > 32
 }
 
-/// Opens Explorer with the file selected.
+/// Opens the selected BetterExplorer installation, or Windows File Explorer.
 pub fn reveal(path: &str) -> bool {
+    let key = r"Software\Classes\Directory\shell";
+    if std::path::Path::new(path).is_absolute()
+        && read_string(HKEY_CURRENT_USER, key, "").as_deref() == Some("BetterExplorer.Open")
+        && own_integrity().is_some_and(|level| level < 0x3000)
+    {
+        if let Some(exe) = read_string(
+            HKEY_CURRENT_USER,
+            r"Software\Classes\Directory\shell\BetterExplorer.Open",
+            "BetterExplorerExecutable",
+        ) {
+            let exe = std::path::Path::new(&exe);
+            if exe.is_absolute()
+                && exe.file_name().is_some_and(|name| name.eq_ignore_ascii_case("BetterExplorer.exe"))
+                && std::process::Command::new(exe).args(["--select", path]).spawn().is_ok()
+            {
+                return true;
+            }
+        }
+    }
     let (verb, file, args) = (wide("open"), wide("explorer.exe"), wide(&format!("/select,\"{path}\"")));
     let result = unsafe {
         ShellExecuteW(
