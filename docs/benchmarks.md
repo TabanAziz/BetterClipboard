@@ -46,4 +46,16 @@ Idle over 300 seconds: CPU time did not advance at all (0 ms; Windows counts pro
 
 Budgets from [architecture.md](architecture.md): panel p95 ≤ 80 ms (met), 1 000 entries p95 ≤ 150 ms (met), search p95 ≤ 50 ms (met), warm start p95 ≤ 150 ms (met), idle CPU < 0.5 % of one core (met).
 
+### Emoji page (0.1.2)
+
+`BetterClipboard.exe --no-hotkey --bench-emoji --report emoji.txt` opens the emoji page, waits until the colour emoji are rendered and then repaints the page 60 times, which is what moving the mouse over it does. Measured is the time inside `WM_PAINT`.
+
+| Measurement | 0.1.1 | 0.1.2 |
+| --- | --- | --- |
+| First paint of the emoji page | 362 to 412 ms (3 runs) | 2.1 to 2.6 ms (3 runs) |
+| Repaint, median | 31.4 ms | 0.68 / 0.91 ms (2 valid runs) |
+| Repaint, p95 | 33.3 ms | 0.84 / 1.27 ms |
+
+In 0.1.1 every paint drew all visible emoji through Direct2D. In 0.1.2 a background thread renders all emoji once (about 0.6 s at below-normal priority, starting 1.5 s after launch) and paints only copy the bitmaps. A third 0.1.2 run is not counted: the panel was hidden by a click elsewhere and no repaint happened.
+
 For comparison, the Windows panel is hosted in `TextInputHost.exe`, which used 155 MB working set and 165 MB private memory on the same PC at the time of the measurement. That process also hosts the touch keyboard and emoji panel, so the numbers are not a like-for-like comparison.

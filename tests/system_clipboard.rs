@@ -254,7 +254,13 @@ fn writes_entries_back_in_all_formats() {
         }),
         ..Default::default()
     };
-    service.send(Command::Write { id: 7, content: Arc::new(content), plain_text: false, paste: false });
+    service.send(Command::Write {
+        id: 7,
+        content: Arc::new(content),
+        plain_text: false,
+        paste: false,
+        keep_local: false,
+    });
     match pump_until(&events, Duration::from_secs(5)) {
         Some(Event::Written { id: 7, paste: false, result: Ok(()) }) => {}
         _ => panic!("write failed"),
@@ -271,13 +277,33 @@ fn writes_entries_back_in_all_formats() {
 
     // Plain text mode drops the formatting.
     let rich = Content { text: Some("plain".into()), html: Some(b"<b>plain</b>".to_vec()), ..Default::default() };
-    service.send(Command::Write { id: 8, content: Arc::new(rich), plain_text: true, paste: false });
+    service.send(Command::Write { id: 8, content: Arc::new(rich), plain_text: true, paste: false, keep_local: false });
     assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 8, result: Ok(()), .. })));
     assert!(get(format("HTML Format")).is_none());
 
+    // Items from the phone are marked so Phone Link and cloud sync do not send them back.
+    let phone = Content { text: Some("from the phone".into()), ..Default::default() };
+    service.send(Command::Write {
+        id: 10,
+        content: Arc::new(phone),
+        plain_text: false,
+        paste: false,
+        keep_local: true,
+    });
+    assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 10, result: Ok(()), .. })));
+    assert!(get(format("ExcludeClipboardContentFromMonitorProcessing")).is_some());
+    assert_eq!(get(format("CanUploadToCloudClipboard")).unwrap()[..4], 0u32.to_le_bytes());
+    assert_eq!(get(format("CanIncludeInClipboardHistory")).unwrap()[..4], 0u32.to_le_bytes());
+
     // Files go back as CF_HDROP.
     let files = Content { files: vec![r"C:\Windows\win.ini".into()], drop_effect: Some(5), ..Default::default() };
-    service.send(Command::Write { id: 9, content: Arc::new(files), plain_text: false, paste: false });
+    service.send(Command::Write {
+        id: 9,
+        content: Arc::new(files),
+        plain_text: false,
+        paste: false,
+        keep_local: false,
+    });
     assert!(matches!(pump_until(&events, Duration::from_secs(5)), Some(Event::Written { id: 9, result: Ok(()), .. })));
     assert_eq!(bcb::clipfmt::parse_hdrop(&get(CF_HDROP as u32).unwrap()), vec![r"C:\Windows\win.ini".to_string()]);
 }

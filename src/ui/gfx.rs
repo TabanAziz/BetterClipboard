@@ -250,6 +250,42 @@ impl Canvas {
         }
     }
 
+    /// Composites a square premultiplied BGRA bitmap at (x, y), clipped vertically.
+    pub fn blit_premultiplied(&mut self, pixels: &[u32], size: i32, x: i32, y: i32, clip_y0: i32, clip_y1: i32) {
+        self.flush();
+        if self.px.is_null() {
+            return;
+        }
+        let y0 = y.max(clip_y0).max(0);
+        let y1 = (y + size).min(clip_y1).min(self.h);
+        let x0 = x.max(0);
+        let x1 = (x + size).min(self.w);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        for yy in y0..y1 {
+            let src = &pixels[((yy - y) * size + (x0 - x)) as usize..((yy - y) * size + (x1 - x)) as usize];
+            let dst = self.row(yy, x0, x1);
+            for (d, &s) in dst.iter_mut().zip(src) {
+                let a = s >> 24;
+                if a == 0 {
+                    continue;
+                }
+                if a == 255 {
+                    *d = s | 0xFF00_0000;
+                    continue;
+                }
+                let inv = 255 - a;
+                let channel = |shift: u32| -> u32 {
+                    let sc = (s >> shift) & 0xFF;
+                    let dc = (*d >> shift) & 0xFF;
+                    (sc + (dc * inv + 127) / 255).min(255)
+                };
+                *d = 0xFF00_0000 | (channel(16) << 16) | (channel(8) << 8) | channel(0);
+            }
+        }
+    }
+
     pub fn text(&self, font: HFONT, s: &str, rc: (i32, i32, i32, i32), c: Color, flags: u32) {
         if s.is_empty() || rc.2 <= 0 || rc.3 <= 0 {
             return;

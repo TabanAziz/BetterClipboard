@@ -72,6 +72,10 @@ pub enum Command {
         content: Arc<Content>,
         plain_text: bool,
         paste: bool,
+        /// Keep the data on this PC: mark it so clipboard monitors (Phone Link's
+        /// cross-device copy, Windows history and cloud sync) do not pass it on. Used for
+        /// items that came from the phone, so they are not sent back to it.
+        keep_local: bool,
     },
     Configure(CaptureConfig),
     /// Empties the system clipboard (Settings > Clear clipboard data).
@@ -126,6 +130,7 @@ struct Formats {
     drop_effect: u32,
     exclude: u32,
     can_include: u32,
+    can_upload: u32,
     viewer_ignore: u32,
 }
 
@@ -139,6 +144,7 @@ impl Formats {
             drop_effect: reg("Preferred DropEffect"),
             exclude: reg("ExcludeClipboardContentFromMonitorProcessing"),
             can_include: reg("CanIncludeInClipboardHistory"),
+            can_upload: reg("CanUploadToCloudClipboard"),
             viewer_ignore: reg("Clipboard Viewer Ignore"),
         }
     }
@@ -340,8 +346,8 @@ impl Worker {
                     }
                     self.own_sequence = unsafe { GetClipboardSequenceNumber() };
                 }
-                Command::Write { id, content, plain_text, paste } => {
-                    let result = self.write(&content, plain_text);
+                Command::Write { id, content, plain_text, paste, keep_local } => {
+                    let result = self.write(&content, plain_text, keep_local);
                     self.emit(Event::Written { id, paste, result });
                 }
             }
@@ -492,7 +498,7 @@ impl Worker {
         Ok(Captured { content, image_print, app, origin })
     }
 
-    fn write(&mut self, content: &Content, plain_text: bool) -> Result<(), String> {
+    fn write(&mut self, content: &Content, plain_text: bool, keep_local: bool) -> Result<(), String> {
         let f = &self.formats;
         let mut parts: Vec<(u32, Vec<u8>)> = Vec::new();
         let text =
@@ -524,6 +530,11 @@ impl Worker {
         }
         if parts.is_empty() {
             return Err("There is nothing to paste as plain text.".into());
+        }
+        if keep_local {
+            parts.push((f.exclude, vec![0]));
+            parts.push((f.can_include, 0u32.to_le_bytes().to_vec()));
+            parts.push((f.can_upload, 0u32.to_le_bytes().to_vec()));
         }
         if !open_clipboard(self.window) {
             return Err("Another app is using the clipboard. Try again.".into());

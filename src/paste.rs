@@ -55,6 +55,19 @@ fn key(vk: u16, up: bool) -> INPUT {
     input
 }
 
+/// True when the target's thread has a focused window again (its text field is ready).
+pub fn has_keyboard_focus(target: HWND) -> bool {
+    unsafe {
+        let thread =
+            windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(target, std::ptr::null_mut());
+        let mut info: windows_sys::Win32::UI::WindowsAndMessaging::GUITHREADINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of_val(&info) as u32;
+        thread != 0
+            && windows_sys::Win32::UI::WindowsAndMessaging::GetGUIThreadInfo(thread, &mut info) != 0
+            && !info.hwndFocus.is_null()
+    }
+}
+
 /// Types text into the focused window as Unicode keyboard input (no clipboard involved).
 pub fn type_text(text: &str) -> bool {
     let mut inputs = Vec::new();

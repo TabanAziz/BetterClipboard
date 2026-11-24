@@ -180,7 +180,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let benchmark = has("--bench-popup") || has("--bench-search") || has("--startup-report");
+    let benchmark = has("--bench-popup") || has("--bench-search") || has("--bench-emoji") || has("--startup-report");
     let options = app::Options { no_hotkey: has("--no-hotkey"), background: has("--background") || benchmark };
     // Relative paths handed to the shell must not resolve next to a downloaded file.
     if let Some(system) = std::env::var_os("SystemRoot") {
@@ -193,6 +193,7 @@ fn main() -> ExitCode {
 
     if let Some(path) = value_after(&args, "--startup-report") {
         bcb::bench::startup_report(&PathBuf::from(path));
+        app::finish();
         return ExitCode::SUCCESS;
     }
     if has("--bench-popup") {
@@ -200,12 +201,20 @@ fn main() -> ExitCode {
         let items = value_after(&args, "--items").and_then(|v| v.parse().ok()).unwrap_or(25);
         let out = value_after(&args, "--report").unwrap_or_else(|| "bench-popup.txt".into());
         bcb::bench::popup(runs, items, &PathBuf::from(out));
+        app::finish();
+        return ExitCode::SUCCESS;
+    }
+    if has("--bench-emoji") {
+        let out = value_after(&args, "--report").unwrap_or_else(|| "bench-emoji.txt".into());
+        bcb::bench::emoji(&PathBuf::from(out));
+        app::finish();
         return ExitCode::SUCCESS;
     }
     if has("--bench-search") {
         let items = value_after(&args, "--items").and_then(|v| v.parse().ok()).unwrap_or(10_000);
         let out = value_after(&args, "--report").unwrap_or_else(|| "bench-search.txt".into());
         bcb::bench::search(items, &PathBuf::from(out));
+        app::finish();
         return ExitCode::SUCCESS;
     }
     let hotkey_log = value_after(&args, "--bench-hotkey-log");

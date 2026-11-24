@@ -203,8 +203,8 @@ pub struct Popup {
     page: usize,
     /// Characters of an emoji, kaomoji, symbol or favourites page.
     cells: Vec<String>,
-    /// Direct2D renderer for colour emoji, created on first use.
-    emoji: Option<super::emoji::EmojiRenderer>,
+    /// Whether each cell is an emoji (drawn from the pre-rendered colour bitmaps).
+    cell_is_emoji: Vec<bool>,
     cols: usize,
     cell: (i32, i32),
     content_h: i32,
@@ -217,6 +217,8 @@ pub struct Popup {
     expanded: Option<u64>,
     /// QPC time of the last completed paint (benchmarks read it).
     pub painted_at: f64,
+    /// Milliseconds the last paint took (benchmarks read it).
+    pub paint_ms: f64,
 }
 
 pub fn register_class(proc_: wm::WNDPROC) -> Vec<u16> {
@@ -282,10 +284,11 @@ impl Popup {
             expanded: None,
             page: CLIPBOARD_TAB,
             cells: Vec::new(),
-            emoji: None,
+            cell_is_emoji: Vec::new(),
             cols: 8,
             cell: (1, 1),
             painted_at: 0.0,
+            paint_ms: 0.0,
         }
     }
 
@@ -678,6 +681,46 @@ impl Popup {
     }
 
     /// Switches between the clipboard and the emoji, kaomoji and symbol pages.
+    fn emoji_px(&self) -> i32 {
+        self.px(24.0)
+    }
+
+    /// The colour emoji bitmaps for the current scale; starts rendering them if needed.
+    fn emoji_sprites(&self) -> Option<super::emoji::Sprites> {
+        let size = self.emoji_px();
+        let sprites = super::emoji::sprites(size);
+        if sprites.is_none() {
+            let window = self.hwnd as isize;
+            super::emoji::prepare(size, 0, move || unsafe {
+                InvalidateRect(window as HWND, std::ptr::null(), 0);
+            });
+        }
+        sprites
+    }
+
+    /// Renders the colour emoji for the main monitor in the background, so the emoji
+    /// page is instant the first time it opens.
+    pub fn prewarm_emoji(&self) {
+        let dpi = unsafe {
+            let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+            let (mut x, mut y) = (96u32, 96u32);
+            GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y);
+            x
+        };
+        let size = (24.0 * dpi as f32 / 96.0).round() as i32;
+        super::emoji::prepare(size, 1500, || {});
+    }
+
+    /// Whether the colour emoji for the current scale are rendered (benchmarks).
+    pub fn emoji_ready(&self) -> bool {
+        super::emoji::sprites(self.emoji_px()).is_some()
+    }
+
+    /// Opens the emoji page (benchmarks).
+    pub fn open_emoji_page(&mut self, ctx: &Context) {
+        self.set_page(EMOJI_TAB, ctx);
+    }
+
     fn set_page(&mut self, page: usize, ctx: &Context) {
         if self.page == page {
             return;
@@ -707,6 +750,8 @@ impl Popup {
             SYMBOLS_TAB => crate::symbols::SYMBOLS.iter().filter(|s| matches(s)).map(|s| s.to_string()).collect(),
             _ => Vec::new(),
         };
+        let emoji: std::collections::HashSet<&str> = crate::symbols::EMOJI.iter().map(|(e, _)| *e).collect();
+        self.cell_is_emoji = self.cells.iter().map(|c| emoji.contains(c.as_str())).collect();
         // Kaomoji are wide; everything else fits a square cell.
         let wide = self.cells.iter().any(|t| t.chars().count() > 3);
         let width = self.card_w();
@@ -1195,6 +1240,7 @@ impl Popup {
     // ------------------------------------------------------------------ painting
 
     pub fn paint(&mut self, dc: HDC, ctx: &Context) {
+        let started = util::qpc_seconds();
         self.rebuild(ctx);
         let (w, h) = (self.width(), self.height());
         self.canvas.ensure(w, h);
@@ -1208,6 +1254,7 @@ impl Popup {
         let (sx, sy, sw, sh) = self.search_rect();
         let chips = if self.page == CLIPBOARD_TAB { self.chip_rects() } else { Vec::new() };
         let page_title = PAGE_TITLES[self.page];
+        let emoji_sprites = if self.page == CLIPBOARD_TAB { None } else { self.emoji_sprites() };
         let placeholder = match self.page {
             EMOJI_TAB => "Search emoji",
             KAOMOJI_TAB => "Search kaomoji",
@@ -1360,7 +1407,6 @@ impl Popup {
                     DT_CENTER | DT_WORDBREAK,
                 );
             }
-            let mut colour_emoji = Vec::new();
             for (i, text) in self.cells.iter().enumerate() {
                 let (col, row) = ((i % cols) as i32, (i / cols) as i32);
                 let (x, y) = (cx + col * cell_w, top + row * cell_h - self.scroll);
@@ -1392,29 +1438,21 @@ impl Popup {
                         1.0,
                     );
                 }
-                // Emoji go through DirectWrite (colour); GDI draws them as outlines only.
-                // The emoji font lacks many symbols, so symbols use the text font.
-                if crate::symbols::EMOJI.iter().any(|(e, _)| e == text) {
-                    colour_emoji.push((text.as_str(), (x, y, cell_w, cell_h)));
+                if self.cell_is_emoji.get(i).copied().unwrap_or(false) {
+                    // Colour emoji come pre-rendered from a background thread; until they
+                    // are ready (only right after start), GDI draws outlines.
+                    match emoji_sprites.as_ref().and_then(|s| s.get(text.as_str())) {
+                        Some(sprite) => {
+                            let (sx, sy) = (x + (cell_w - sprite.size) / 2, y + (cell_h - sprite.size) / 2);
+                            c.blit_premultiplied(&sprite.pixels, sprite.size, sx, sy, top, bottom);
+                        }
+                        None => c.text(self.fonts.emoji, text, (x, y, cell_w, cell_h), p.text, DT_C),
+                    }
                     continue;
                 }
+                // The emoji font lacks many symbols, so symbols use the text font.
                 let font = if text.chars().count() > 3 { self.fonts.body } else { self.fonts.symbol };
                 c.text(font, text, (x, y, cell_w, cell_h), p.text, DT_C);
-            }
-            if !colour_emoji.is_empty() {
-                unsafe { GdiFlush() };
-                if self.emoji.is_none() {
-                    self.emoji = super::emoji::EmojiRenderer::new();
-                }
-                let drawn = self
-                    .emoji
-                    .as_mut()
-                    .is_some_and(|r| r.draw(c.hdc, (w, h), (0, top, w, bottom - top), &colour_emoji, px(24.0), p.text));
-                if !drawn {
-                    for (text, rect) in &colour_emoji {
-                        c.text(self.fonts.emoji, text, *rect, p.text, DT_C);
-                    }
-                }
             }
         } else {
             if self.cards.is_empty() {
@@ -1660,6 +1698,7 @@ impl Popup {
 
         c.present(dc, 0, 0, w, h);
         self.painted_at = util::qpc_seconds();
+        self.paint_ms = (self.painted_at - started) * 1000.0;
     }
 }
 

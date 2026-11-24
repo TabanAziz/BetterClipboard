@@ -147,6 +147,15 @@ pub struct Stats {
     pub skipped_locked: u64,
 }
 
+/// A paste waiting for the target window to take the keyboard focus back.
+#[derive(Clone, Copy)]
+struct PendingPaste {
+    target: HWND,
+    attempts: u32,
+    /// When the target became the foreground window again (QPC seconds).
+    focused_at: Option<f64>,
+}
+
 pub struct App {
     pub main: HWND,
     pub settings: Settings,
@@ -158,7 +167,7 @@ pub struct App {
     pub popup: Popup,
     tray: Tray,
     target: HWND,
-    pending_paste: Option<(HWND, u32)>,
+    pending_paste: Option<PendingPaste>,
     hotkey_registered: bool,
     pub notice: Option<String>,
     pub policy_blocked: bool,
@@ -280,6 +289,7 @@ pub fn start(options: &Options) -> bool {
     let tip = app.tray_tip();
     app.tray.add(app.settings.paused, &tip);
     app.popup.set_theme(app.settings.theme);
+    app.popup.prewarm_emoji();
     unsafe {
         wm::SetTimer(main, PRUNE_TIMER, 60 * 60 * 1000, None);
         // Foreground changes tell us where to paste when the panel opens from the tray.
@@ -329,6 +339,15 @@ pub fn run_message_loop() {
         }
     }
     // Final save and thread shutdown.
+    APP.with(|cell| {
+        if let Some(mut app) = cell.borrow_mut().take() {
+            app.shutdown();
+        }
+    });
+}
+
+/// Saves and stops the worker threads without a message loop (benchmark runs).
+pub fn finish() {
     APP.with(|cell| {
         if let Some(mut app) = cell.borrow_mut().take() {
             app.shutdown();
@@ -532,7 +551,7 @@ impl App {
     fn begin_paste(&mut self) {
         match paste::check_target(self.target) {
             Ok(()) => {
-                self.pending_paste = Some((self.target, 0));
+                self.pending_paste = Some(PendingPaste { target: self.target, attempts: 0, focused_at: None });
                 self.try_paste();
             }
             Err(paste::Blocked::Elevated) => {
@@ -550,14 +569,25 @@ impl App {
     }
 
     fn try_paste(&mut self) {
-        let Some((target, attempts)) = self.pending_paste else { return };
+        let Some(mut pending) = self.pending_paste else { return };
+        let target = pending.target;
         if paste::focus(target) {
-            self.pending_paste = None;
-            unsafe { wm::KillTimer(self.main, PASTE_TIMER) };
-            if !paste::send_ctrl_v() {
-                self.tray.notify("Copied to the clipboard", "Windows blocked the paste. Press Ctrl+V yourself.");
+            // Browsers and Electron apps restore the focus to their text field a little
+            // after the window is active; a Ctrl+V sent before that is lost.
+            let now = util::qpc_seconds();
+            let since = *pending.focused_at.get_or_insert(now);
+            let ready = paste::has_keyboard_focus(target) && now - since >= 0.06;
+            if ready || now - since >= 0.3 {
+                self.pending_paste = None;
+                unsafe { wm::KillTimer(self.main, PASTE_TIMER) };
+                if !paste::send_ctrl_v() {
+                    self.tray.notify("Copied to the clipboard", "Windows blocked the paste. Press Ctrl+V yourself.");
+                }
+            } else {
+                self.pending_paste = Some(pending);
+                unsafe { wm::SetTimer(self.main, PASTE_TIMER, 15, None) };
             }
-        } else if attempts >= 12 {
+        } else if pending.attempts >= 12 {
             self.pending_paste = None;
             unsafe { wm::KillTimer(self.main, PASTE_TIMER) };
             self.tray.notify(
@@ -565,7 +595,9 @@ impl App {
                 "The previous window could not be activated. Press Ctrl+V to paste.",
             );
         } else {
-            self.pending_paste = Some((target, attempts + 1));
+            pending.attempts += 1;
+            pending.focused_at = None;
+            self.pending_paste = Some(pending);
             unsafe { wm::SetTimer(self.main, PASTE_TIMER, 15, None) };
         }
     }
@@ -684,6 +716,7 @@ impl App {
     fn choose(&mut self, id: u64, mode: PasteMode) {
         let Some(item) = self.history.get(id) else { return };
         let content = Arc::clone(&item.content);
+        let keep_local = item.origin == Origin::Phone;
         let paste = mode != PasteMode::CopyOnly && self.settings.paste_on_select;
         self.popup.hide();
         self.history.promote(id, util::now_ms());
@@ -691,7 +724,7 @@ impl App {
             self.schedule_save();
         }
         if let Some(clip) = &self.clip {
-            clip.send(Command::Write { id, content, plain_text: mode == PasteMode::PlainText, paste });
+            clip.send(Command::Write { id, content, plain_text: mode == PasteMode::PlainText, paste, keep_local });
         }
     }
 

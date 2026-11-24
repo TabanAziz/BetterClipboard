@@ -151,6 +151,52 @@ pub fn popup(runs: usize, items: usize, path: &Path) {
 
 /// Types a query into the panel letter by letter over `items` entries and records the
 /// time from the key until the filtered list was painted.
+/// Repaints the emoji page again and again (what moving the mouse over it does) and
+/// records how long each paint takes, plus the very first paint of the page.
+pub fn emoji(path: &Path) {
+    wait_loaded();
+    app::with(|a| a.show_popup(Opened::Command));
+    wait_for_paint(0.0);
+    let started = util::qpc_seconds();
+    app::with(|a| {
+        let ctx = crate::ui::popup::Context {
+            history: &a.history,
+            recent: &[],
+            history_enabled: true,
+            paused: false,
+            policy_blocked: false,
+            notice: None,
+            now: util::now_ms(),
+        };
+        a.popup.open_emoji_page(&ctx);
+    });
+    wait_for_paint(started);
+    let first = app::with(|a| a.popup.paint_ms).unwrap_or(0.0);
+    // Measure the colour path, not the outline fallback used while rendering runs.
+    let deadline = util::qpc_seconds() + 10.0;
+    while !app::with(|a| a.popup.emoji_ready()).unwrap_or(true) && util::qpc_seconds() < deadline {
+        app::pump_pending();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let ready_after = (util::qpc_seconds() - started) * 1000.0;
+    let mut samples = Vec::new();
+    for _ in 0..60 {
+        let start = util::qpc_seconds();
+        app::with(|a| a.popup.invalidate());
+        wait_for_paint(start);
+        samples.push(app::with(|a| a.popup.paint_ms).unwrap_or(0.0));
+    }
+    let mut text = report("emoji page repaint, time inside WM_PAINT (ms)", &samples);
+    text.insert_str(
+        0,
+        &format!(
+            "# first paint of the page: {first:.2} ms; colour emoji ready {ready_after:.0} ms after opening it \
+             (rendered in the background; at start-up after a 1.5 s delay)\n"
+        ),
+    );
+    let _ = std::fs::write(path, text);
+}
+
 pub fn search(items: usize, path: &Path) {
     wait_loaded();
     fill(items);

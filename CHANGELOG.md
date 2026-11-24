@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- The emoji page is instant: colour emoji are rendered once on a background thread and then only copied. First opening went from about 400 ms to about 2 ms, a repaint while moving the mouse from about 31 ms to under 1 ms.
+- Items that came from your phone are no longer sent back to it when you paste them on the PC (they are marked for clipboard monitors, Windows history and cloud sync to ignore).
+- Pasting waits until the target app has its text field focused again, at most 0.3 s.
+- Benchmark runs shut down their worker threads cleanly.
+
 ## 0.1.1
 
 - Emoji are drawn in colour, like in the Windows panel (DirectWrite instead of GDI).
