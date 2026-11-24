@@ -75,7 +75,7 @@ You can also just run the exe without installing.
 ## Use
 
 - **Win+Alt+V** opens the history (change it in Settings). Clicking the tray icon works too.
-- Win+V itself belongs to Windows. If you want it for BetterClipboard, Settings > "Use Win+V..." switches off Windows' own shortcut for your account; it applies after you sign out and back in, and can be undone there or by uninstalling.
+- Want Win+V to open BetterClipboard instead of the Windows panel? Run `BetterClipboard.exe --use-win-v` or use Settings > "Use Win+V...". It switches off Windows' own Win+V for your account and restarts Explorer so it applies right away. `--windows-win-v`, the same button or uninstalling gives Win+V back.
 - Right-click an entry or press the Menu key for everything else: paste as plain text, copy only, pin, delete, save or open an image, show a file in Explorer.
 - To get your phone's clipboard: in Phone Link, turn on "Cross-device copy and paste" (Settings > Features). It works with supported Android phones.
 

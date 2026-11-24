@@ -4,7 +4,7 @@ BetterClipboard is not a full replacement for the Windows clipboard panel. These
 
 ## Platform limits
 
-- **Win+V belongs to Windows.** Explorer registers it, so `RegisterHotKey` cannot take it. The default shortcut is Win+Alt+V. Settings offers to switch off Explorer's Win+V through the documented `DisabledHotkeys` value; that only applies after signing out and back in, and it was not exercised on the test PC.
+- **Win+V belongs to Windows by default.** Explorer registers it, so the default shortcut is Win+Alt+V. `BetterClipboard.exe --use-win-v` (or Settings > "Use Win+V...") switches off Explorer's Win+V through the documented `DisabledHotkeys` value and restarts Explorer. On the test PC Win+V was then free and owned by BetterClipboard. While it is switched off, the Windows panel is not reachable by keyboard; `--windows-win-v` gives it back.
 - **No access to Windows' own history or cloud sync.** Windows' history and "Sync across your devices" are separate. BetterClipboard records from the moment it runs and cannot read entries copied before it started or synced from other PCs, unless Windows also puts them on the current clipboard. Both histories run side by side without conflict.
 - **Apps running as administrator.** Windows blocks input from normal apps into elevated ones. BetterClipboard copies the entry and asks you to press Ctrl+V. It never requests elevation.
 - **Secure desktop (UAC prompts, sign-in screen).** The panel cannot open there.

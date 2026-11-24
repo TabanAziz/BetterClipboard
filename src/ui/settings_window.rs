@@ -554,6 +554,7 @@ fn on_settings_command(window: HWND, id: i32) {
                         Ok(()) => {
                             set_text(window, ID_HOTKEY, &Hotkey::DEFAULT.label());
                             set_text(window, ID_WIN_V, "Use Win+V...");
+                            offer_explorer_restart(window);
                         }
                         Err(e) => {
                             message_box(window, &e, wm::MB_ICONWARNING);
@@ -571,6 +572,7 @@ fn on_settings_command(window: HWND, id: i32) {
                         Ok(()) => {
                             set_text(window, ID_HOTKEY, &Hotkey::WIN_V.label());
                             set_text(window, ID_WIN_V, "Give Win+V back to Windows...");
+                            offer_explorer_restart(window);
                         }
                         Err(e) => {
                             message_box(window, &e, wm::MB_ICONWARNING);
@@ -580,6 +582,22 @@ fn on_settings_command(window: HWND, id: i32) {
             }
         }
         _ => {}
+    }
+}
+
+/// Saves the shortcut right away and offers to restart Explorer, which applies the
+/// Win+V change without signing out.
+fn offer_explorer_restart(window: HWND) {
+    if let Some(Ok(next)) = app::with(|a| read_settings(window, &a.settings)) {
+        app::with(|a| a.apply_settings(next));
+    }
+    let answer = message_box(
+        window,
+        "Restart Explorer now so the change applies without signing out?\n\nOpen File Explorer windows will close.",
+        wm::MB_YESNO | wm::MB_ICONQUESTION,
+    );
+    if answer == wm::IDYES {
+        std::thread::spawn(system::restart_explorer);
     }
 }
 

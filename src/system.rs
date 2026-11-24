@@ -163,6 +163,35 @@ pub fn set_windows_win_v_disabled(disabled: bool) -> Result<(), String> {
     result
 }
 
+/// Ends and restarts Explorer for the current user, like Task Manager's "Restart" on
+/// Windows Explorer. Explorer reads `DisabledHotkeys` when it starts, so this applies the
+/// Win+V change without signing out. Open File Explorer windows close.
+pub fn restart_explorer() -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let windows = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let session = format!("SESSION eq {}", current_session());
+    let ended = std::process::Command::new(format!(r"{windows}\System32\taskkill.exe"))
+        .args(["/f", "/im", "explorer.exe", "/fi", &session])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .is_ok_and(|s| s.success());
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let started = std::process::Command::new(format!(r"{windows}\explorer.exe")).spawn().is_ok();
+    ended && started
+}
+
+fn current_session() -> u32 {
+    let mut session = 0u32;
+    unsafe {
+        windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+            windows_sys::Win32::System::Threading::GetCurrentProcessId(),
+            &mut session,
+        )
+    };
+    session
+}
+
 /// Opens a URI or file with its default handler (ms-settings:, ms-phone:, https:, files).
 pub fn open(target: &str) -> bool {
     let (verb, file) = (wide("open"), wide(target));

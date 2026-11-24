@@ -37,5 +37,5 @@ These were run with PowerShell scripts that start BetterClipboard in a separate 
 - Display scaling 125/150/200% and moving the panel between monitors with different scaling.
 - Narrator with the panel open.
 - Pasting into Word, Excel, Edge, Windows Terminal and Acrobat by hand.
-- Win+V takeover after sign-out.
+- Pressing Win+V by hand after the takeover (the shortcut registration itself was verified).
 - A real Android phone with Phone Link cross-device copy and paste.

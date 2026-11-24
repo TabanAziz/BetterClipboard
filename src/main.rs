@@ -19,6 +19,8 @@ const HELP: &str = "BetterClipboard [option]
 --settings       Open settings
 --snippet        Create a pinned snippet
 --quit           Quit the running instance
+--use-win-v      Open BetterClipboard with Win+V instead of the Windows panel
+--windows-win-v  Give Win+V back to Windows
 --install        Install for the current user (Start menu, sign-in start)
 --uninstall      Remove the installation (--quiet: keep data, no questions)
 --version        Show the version";
@@ -82,6 +84,31 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         };
+    }
+    if has("--use-win-v") || has("--windows-win-v") {
+        let take = has("--use-win-v");
+        let path = util::data_dir().join("settings.ini");
+        let mut settings = bcb::settings::Settings::load(&path);
+        settings.hotkey = if take { bcb::settings::Hotkey::WIN_V } else { bcb::settings::Hotkey::DEFAULT };
+        let result =
+            bcb::system::set_windows_win_v_disabled(take).and_then(|_| settings.save(&path).map_err(|e| e.to_string()));
+        if let Err(error) = result {
+            if !has("--quiet") {
+                message(&error, wm::MB_ICONERROR);
+            }
+            return ExitCode::from(1);
+        }
+        forward(Remote::Reload);
+        let restart = has("--restart-explorer")
+            || (!has("--quiet")
+                && message(
+                    "Explorer reads this setting when it starts.\n\nRestart Explorer now? Open File Explorer windows will close. Otherwise it applies the next time you sign in.",
+                    wm::MB_YESNO | wm::MB_ICONQUESTION,
+                ) == wm::IDYES);
+        if restart {
+            bcb::system::restart_explorer();
+        }
+        return ExitCode::SUCCESS;
     }
     if has("--uninstall") {
         let quiet = has("--quiet");

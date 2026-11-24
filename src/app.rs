@@ -46,6 +46,8 @@ pub enum Remote {
     Settings = 2,
     Quit = 3,
     Snippet = 4,
+    /// Re-read settings.ini (written by `--use-win-v`).
+    Reload = 5,
 }
 
 impl Remote {
@@ -55,6 +57,7 @@ impl Remote {
             2 => Remote::Settings,
             3 => Remote::Quit,
             4 => Remote::Snippet,
+            5 => Remote::Reload,
             _ => return None,
         })
     }
@@ -1032,6 +1035,12 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 Some(Remote::Quit) => {
                     wm::DestroyWindow(hwnd);
                 }
+                Some(Remote::Reload) => {
+                    with(|app| {
+                        let settings = Settings::load(&app.settings_path);
+                        app.apply_settings(settings);
+                    });
+                }
                 None => {}
             }
             0
@@ -1083,6 +1092,12 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                     let tip = app.tray_tip();
                     let paused = app.settings.paused || !app.settings.history_enabled;
                     app.tray.add(paused, &tip);
+                    // A restarted Explorer may have released the shortcut (Win+V after
+                    // DisabledHotkeys), so try again.
+                    if !app.hotkey_registered {
+                        app.register_hotkey();
+                        app.redraw_popup();
+                    }
                 });
                 return 0;
             }

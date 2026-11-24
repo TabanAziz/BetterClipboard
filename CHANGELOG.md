@@ -12,3 +12,4 @@ First public version.
 - Pinned entries saved encrypted with DPAPI; saving the whole history is optional.
 - Pause, excluded apps, retention period, and respect for apps that mark copies as private.
 - Per-user install and uninstall without administrator rights.
+- `--use-win-v` / `--windows-win-v` move Win+V between Windows and BetterClipboard, with an Explorer restart so no sign-out is needed.
