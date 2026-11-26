@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Settings opens faster after the first visit and reuses rendered theme previews when you scroll or move the pointer.
+- When you open Settings from the clipboard panel, a back arrow returns you to the same search and selection.
+- Showing a file in its folder uses BetterExplorer if you have set it as the default for folders. Windows File Explorer is the fallback.
+
 ## 0.1.4
 
 - Settings now previews six BetterExplorer themes alongside System, Light and Dark. The selected theme applies immediately to the clipboard panel and Settings and is kept after a restart.
