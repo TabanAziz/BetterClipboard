@@ -348,9 +348,12 @@ impl Worker {
                 Command::Configure(config) => self.config = config,
                 Command::Clear => {
                     if open_clipboard(self.window) {
-                        let _guard = OpenGuard;
-                        if unsafe { EmptyClipboard() } != 0 {
-                            self.own_sequence = unsafe { GetClipboardSequenceNumber() };
+                        let emptied = {
+                            let _guard = OpenGuard;
+                            unsafe { EmptyClipboard() != 0 }
+                        };
+                        if emptied {
+                            self.remember_own_write();
                         }
                     }
                 }
@@ -371,6 +374,15 @@ impl Worker {
             }
         }
         false
+    }
+
+    fn remember_own_write(&mut self) {
+        // Closing the clipboard can advance the sequence. Sample the committed state,
+        // and do not mark a newer copy if another application has taken ownership.
+        let sequence = unsafe { GetClipboardSequenceNumber() };
+        if unsafe { GetClipboardOwner() } == self.window {
+            self.own_sequence = sequence;
+        }
     }
 
     fn on_update(&mut self) {
@@ -613,9 +625,9 @@ impl Worker {
                         failed = true;
                     }
                 }
-                self.own_sequence = GetClipboardSequenceNumber();
             }
         }
+        self.remember_own_write();
         if failed {
             Err("Windows did not accept all clipboard formats.".into())
         } else {
