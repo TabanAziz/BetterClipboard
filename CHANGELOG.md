@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Read screenshots in the clipboard owner's format order, so a ready bitmap can be captured without waiting for a secondary PNG.
+- Paste the current screenshot from history without encoding or replacing it again.
+
 ## 0.1.5
 
 - Settings opens faster after the first visit and reuses rendered theme previews when you scroll or move the pointer.

@@ -349,13 +349,19 @@ impl Worker {
                 Command::Clear => {
                     if open_clipboard(self.window) {
                         let _guard = OpenGuard;
-                        unsafe { EmptyClipboard() };
+                        if unsafe { EmptyClipboard() } != 0 {
+                            self.own_sequence = unsafe { GetClipboardSequenceNumber() };
+                        }
                     }
-                    self.own_sequence = unsafe { GetClipboardSequenceNumber() };
                 }
                 Command::Write { id, content, plain_text, paste, keep_local, fingerprint } => {
                     let unchanged = self.current == Some((unsafe { GetClipboardSequenceNumber() }, fingerprint));
-                    let result = if keep_local && unchanged && !plain_text {
+                    let screenshot = content.picture.is_some()
+                        && content.text.is_none()
+                        && content.html.is_none()
+                        && content.rtf.is_none()
+                        && content.files.is_empty();
+                    let result = if unchanged && !plain_text && (keep_local || screenshot) {
                         Ok(())
                     } else {
                         self.write(&content, plain_text, keep_local)
@@ -414,13 +420,19 @@ impl Worker {
             }
             return;
         }
-        let read = {
+        let (mut sequence, read) = {
             let _guard = OpenGuard;
-            self.read_open_clipboard()
+            if unsafe { GetClipboardSequenceNumber() } != sequence {
+                unsafe { wm::PostMessageW(self.window, wm::WM_CLIPBOARDUPDATE, 0, 0) };
+                return;
+            }
+            let read = self.read_open_clipboard();
+            // Reading a delayed format can advance the sequence while the clipboard is open.
+            (unsafe { GetClipboardSequenceNumber() }, read)
         };
-        // The data may have changed while we read it; the next notification handles that.
+        let captured = read.and_then(|raw| self.finish(raw, app, &mut sequence));
         self.handled_sequence = sequence;
-        match read.and_then(|raw| self.finish(raw, app)) {
+        match captured {
             Ok(captured) => {
                 self.current = Some((sequence, captured.content.fingerprint(captured.image_print)));
                 self.emit(Event::Captured(Box::new(captured)))
@@ -432,8 +444,6 @@ impl Worker {
     fn read_open_clipboard(&self) -> Result<Raw, Skip> {
         let f = &self.formats;
         let limit = self.config.max_bytes;
-        // Images are checked after compression, so allow larger raw bitmaps.
-        let image_limit = (image::MAX_PIXELS as usize * 4).min(limit.saturating_mul(64)).max(limit);
         let too_large = Skip::TooLarge;
         unsafe {
             if IsClipboardFormatAvailable(f.can_include) != 0 {
@@ -455,41 +465,81 @@ impl Worker {
                 .flatten()
                 .filter(|b| b.len() >= 4)
                 .map(|b| u32::from_le_bytes(b[..4].try_into().unwrap()));
-            let png = read_global(f.png, limit.max(MIN_PICTURE_BYTES)).map_err(too_large)?;
-            let dib = if png.is_none() {
-                match read_global(CF_DIBV5 as u32, image_limit).map_err(too_large)? {
-                    Some(d) => Some(d),
-                    None => read_global(CF_DIB as u32, image_limit).map_err(too_large)?,
-                }
-            } else {
-                None
-            };
-            Ok(Raw { text, html, rtf, files: files.unwrap_or_default(), drop_effect, png, dib })
+            let picture = self.read_picture(0)?;
+            Ok(Raw { text, html, rtf, files: files.unwrap_or_default(), drop_effect, picture })
         }
     }
 
+    /// Respect the producer's format order. A screenshot can publish a ready bitmap and
+    /// offer PNG as a slower secondary format rendered while the clipboard is locked.
+    unsafe fn read_picture(&self, after: u32) -> Result<Option<RawPicture>, Skip> {
+        let limit = self.config.max_bytes;
+        let png_limit = limit.max(MIN_PICTURE_BYTES);
+        // Images are checked after compression, so allow larger raw bitmaps.
+        let dib_limit = (image::MAX_PIXELS as usize * 4).min(limit.saturating_mul(64)).max(limit);
+        let mut too_large = None;
+        let mut format = EnumClipboardFormats(after);
+        while format != 0 {
+            let candidate = if format == self.formats.png {
+                read_global(format, png_limit)
+            } else if format == CF_DIBV5 as u32 || format == CF_DIB as u32 {
+                read_global(format, dib_limit)
+            } else {
+                Ok(None)
+            };
+            match candidate {
+                Ok(Some(bytes)) => return Ok(Some(RawPicture { format, bytes })),
+                Ok(None) => {}
+                Err(size) => {
+                    too_large.get_or_insert(size);
+                }
+            }
+            format = EnumClipboardFormats(format);
+        }
+        too_large.map_or(Ok(None), |size| Err(Skip::TooLarge(size)))
+    }
+
+    fn finish_picture(
+        &self,
+        mut candidate: Option<RawPicture>,
+        sequence: &mut u32,
+    ) -> Result<Option<(Picture, u64)>, Skip> {
+        let mut too_large = None;
+        while let Some(RawPicture { format, bytes }) = candidate {
+            let decoded = if format == self.formats.png {
+                Bgra::from_png(&bytes).map(|bgra| (bgra, Some(bytes)))
+            } else {
+                image::decode_dib(&bytes).map(|bgra| (bgra, None))
+            };
+            if let Ok((bgra, png)) = decoded {
+                let fingerprint = bgra.fingerprint();
+                let picture = picture_from(bgra, png);
+                if picture.png.len() <= self.config.max_bytes.max(MIN_PICTURE_BYTES) {
+                    return Ok(Some((picture, fingerprint)));
+                }
+                too_large = Some(picture.png.len());
+            }
+
+            // Only request a fallback after a failed decode, and only from the same copy.
+            if !open_clipboard(self.window) {
+                break;
+            }
+            let _guard = OpenGuard;
+            if unsafe { GetClipboardSequenceNumber() } != *sequence {
+                break;
+            }
+            let read = unsafe { self.read_picture(format) };
+            *sequence = unsafe { GetClipboardSequenceNumber() };
+            candidate = read?;
+        }
+        too_large.map_or(Ok(None), |size| Err(Skip::TooLarge(size)))
+    }
+
     /// Turns raw formats into history content; image work happens after the clipboard is closed.
-    fn finish(&self, raw: Raw, app: String) -> Result<Captured, Skip> {
-        let mut image_print = None;
-        let picture = if let Some(png) = raw.png {
-            match Bgra::from_png(&png) {
-                Ok(bgra) => {
-                    image_print = Some(bgra.fingerprint());
-                    Some(picture_from(bgra, Some(png)))
-                }
-                Err(_) => None,
-            }
-        } else if let Some(dib) = raw.dib {
-            match image::decode_dib(&dib) {
-                Ok(bgra) => {
-                    image_print = Some(bgra.fingerprint());
-                    Some(picture_from(bgra, None))
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+    fn finish(&self, raw: Raw, app: String, sequence: &mut u32) -> Result<Captured, Skip> {
+        let (picture, image_print) = self
+            .finish_picture(raw.picture, sequence)?
+            .map_or((None, None), |(picture, fingerprint)| (Some(picture), Some(fingerprint)));
         let content = Content {
             text: raw.text.filter(|t| !t.is_empty()),
             html: raw.html,
@@ -505,8 +555,7 @@ impl Worker {
         // screenshots of 4K and 5K displays still show up.
         let picture_bytes = content.picture.as_ref().map_or(0, |p| p.png.len());
         let size = content.size();
-        if size - picture_bytes > self.config.max_bytes || picture_bytes > self.config.max_bytes.max(MIN_PICTURE_BYTES)
-        {
+        if size - picture_bytes > self.config.max_bytes {
             return Err(Skip::TooLarge(size));
         }
         let origin = model::origin_for_process(&app);
@@ -564,9 +613,9 @@ impl Worker {
                         failed = true;
                     }
                 }
+                self.own_sequence = GetClipboardSequenceNumber();
             }
         }
-        self.own_sequence = unsafe { GetClipboardSequenceNumber() };
         if failed {
             Err("Windows did not accept all clipboard formats.".into())
         } else {
@@ -581,8 +630,12 @@ struct Raw {
     rtf: Option<Vec<u8>>,
     files: Vec<String>,
     drop_effect: Option<u32>,
-    png: Option<Vec<u8>>,
-    dib: Option<Vec<u8>>,
+    picture: Option<RawPicture>,
+}
+
+struct RawPicture {
+    format: u32,
+    bytes: Vec<u8>,
 }
 
 fn picture_from(bgra: Bgra, png: Option<Vec<u8>>) -> Picture {

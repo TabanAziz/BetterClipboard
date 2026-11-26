@@ -4,7 +4,7 @@
 //!     cargo test --test system_clipboard -- --ignored --test-threads=1
 
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bcb::clipboard::{CaptureConfig, Command, Event, Service, Skip};
@@ -12,11 +12,37 @@ use bcb::image::Bgra;
 use bcb::model::{Content, Picture};
 use windows_sys::Win32::Foundation::{GlobalFree, HANDLE, HWND};
 use windows_sys::Win32::System::DataExchange::*;
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
-use windows_sys::Win32::System::Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT};
+use windows_sys::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT};
 use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 
 static SERIAL: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    static DELAYED_PNG: std::cell::RefCell<Option<(Vec<u8>, mpsc::Sender<()>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+unsafe extern "system" fn screenshot_owner(hwnd: HWND, msg: u32, wp: usize, lp: isize) -> isize {
+    match msg {
+        wm::WM_RENDERFORMAT => {
+            DELAYED_PNG.with(|state| {
+                if let Some((png, rendering)) = state.borrow_mut().take() {
+                    let _ = rendering.send(());
+                    std::thread::sleep(Duration::from_millis(350));
+                    set_format(wp as u32, &png);
+                }
+            });
+            0
+        }
+        wm::WM_DESTROY => {
+            wm::PostQuitMessage(0);
+            0
+        }
+        _ => wm::DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
 
 fn ui_window() -> HWND {
     let class = bcb::util::wide("STATIC");
@@ -57,15 +83,19 @@ fn put(parts: &[(u32, Vec<u8>)]) {
     unsafe {
         EmptyClipboard();
         for (fmt, bytes) in parts {
-            let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1));
-            let p = GlobalLock(h) as *mut u8;
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-            GlobalUnlock(h);
-            if SetClipboardData(*fmt, h as HANDLE).is_null() {
-                GlobalFree(h);
-            }
+            set_format(*fmt, bytes);
         }
         CloseClipboard();
+    }
+}
+
+unsafe fn set_format(fmt: u32, bytes: &[u8]) {
+    let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1));
+    let p = GlobalLock(h) as *mut u8;
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+    GlobalUnlock(h);
+    if SetClipboardData(fmt, h as HANDLE).is_null() {
+        GlobalFree(h);
     }
 }
 
@@ -131,6 +161,80 @@ fn sample_image() -> Bgra {
 
 #[test]
 #[ignore = "uses the system clipboard"]
+fn immediate_paste_does_not_wait_for_the_secondary_screenshot_format() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (service, events) = Service::start(ui_window(), config());
+    let image = sample_image();
+    let dib = image.to_dibv5();
+    let png = image.to_png().unwrap();
+    let (ready_tx, ready) = mpsc::channel();
+    let (render_tx, render) = mpsc::channel();
+    let owner = std::thread::spawn(move || unsafe {
+        let instance = GetModuleHandleW(std::ptr::null());
+        let name = bcb::util::wide("BetterClipboard.TestScreenshotOwner");
+        let class = wm::WNDCLASSW {
+            lpfnWndProc: Some(screenshot_owner),
+            hInstance: instance,
+            lpszClassName: name.as_ptr(),
+            ..std::mem::zeroed()
+        };
+        assert_ne!(wm::RegisterClassW(&class), 0);
+        let window = wm::CreateWindowExW(
+            0,
+            name.as_ptr(),
+            name.as_ptr(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            wm::HWND_MESSAGE,
+            std::ptr::null_mut(),
+            instance,
+            std::ptr::null(),
+        );
+        assert!(!window.is_null());
+        DELAYED_PNG.with(|state| *state.borrow_mut() = Some((png, render_tx)));
+        assert_ne!(OpenClipboard(window), 0);
+        EmptyClipboard();
+        set_format(CF_DIBV5 as u32, &dib);
+        SetClipboardData(format("PNG"), std::ptr::null_mut());
+        CloseClipboard();
+        ready_tx.send(window as isize).unwrap();
+        let mut message: wm::MSG = std::mem::zeroed();
+        while wm::GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
+            wm::DispatchMessageW(&message);
+        }
+    });
+    let window = ready.recv_timeout(Duration::from_secs(3)).unwrap() as HWND;
+    let requested_png = render.recv_timeout(Duration::from_millis(150)).is_ok();
+    let first_paste = get(CF_DIBV5 as u32);
+    let item = captured(&events);
+    let requested_png = requested_png || render.try_recv().is_ok();
+    let before_history_paste = unsafe { GetClipboardSequenceNumber() };
+    service.send(Command::Write {
+        id: 10,
+        fingerprint: item.content.fingerprint(item.image_print),
+        content: Arc::new(item.content.clone()),
+        plain_text: false,
+        paste: true,
+        keep_local: false,
+    });
+    let result = pump_until(&events, Duration::from_secs(5));
+    let after_history_paste = unsafe { GetClipboardSequenceNumber() };
+    unsafe { wm::PostMessageW(window, wm::WM_CLOSE, 0, 0) };
+    owner.join().unwrap();
+
+    assert!(first_paste.is_some(), "the history reader blocked the first native paste");
+    assert!(!requested_png, "the history reader requested the secondary delayed PNG");
+    assert_eq!(bcb::image::decode_dib(&first_paste.unwrap()).unwrap(), image);
+    assert_eq!(Bgra::from_png(&item.content.picture.unwrap().png).unwrap(), image);
+    assert!(matches!(result, Some(Event::Written { id: 10, paste: true, result: Ok(()) })));
+    assert_eq!(before_history_paste, after_history_paste, "the already available screenshot was rewritten");
+}
+
+#[test]
+#[ignore = "uses the system clipboard"]
 fn captures_text_html_images_and_files() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (service, events) = Service::start(ui_window(), config());
@@ -168,6 +272,13 @@ fn captures_text_html_images_and_files() {
     let c = captured(&events);
     let picture = c.content.picture.expect("png picture");
     assert_eq!(Bgra::from_png(&picture.png).unwrap(), transparent);
+
+    // A rejected bitmap must not conceal a usable PNG offered after it.
+    let mut unsupported = image.to_dib();
+    unsupported[16..20].copy_from_slice(&4u32.to_le_bytes()); // BI_JPEG
+    put(&[(CF_DIB as u32, unsupported), (format("PNG"), transparent.to_png().unwrap())]);
+    let c = captured(&events);
+    assert_eq!(Bgra::from_png(&c.content.picture.expect("fallback PNG").png).unwrap(), transparent);
 
     // Files copied in Explorer (CF_HDROP + Preferred DropEffect for "cut").
     let files = vec![r"C:\Windows\win.ini".to_string(), r"C:\Windows\notepad.exe".to_string()];
