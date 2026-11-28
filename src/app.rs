@@ -1328,6 +1328,20 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
             windows_sys::Win32::Graphics::Gdi::InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
+        // Re-clamp after dragging or changing the display/work area so the X
+        // never ends up on the wrong side of a screen edge.
+        wm::WM_EXITSIZEMOVE | wm::WM_DISPLAYCHANGE | wm::WM_SETTINGCHANGE => {
+            with(|app| {
+                let ctx = app.context_static();
+                app.popup.keep_in_work_area(&ctx.as_context(&app.history));
+            });
+            wm::DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        wm::WM_CLOSE => {
+            // Closing the flyout must not destroy the app's reusable panel.
+            with(|app| app.popup.hide());
+            0
+        }
         wm::WM_DPICHANGED => {
             let dpi = (wparam & 0xFFFF) as u32;
             let suggested = *(lparam as *const RECT);
