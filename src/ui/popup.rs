@@ -7,19 +7,17 @@ use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging as wm;
 
 use super::gfx::{self, make_font, mix, Canvas, DT_C, DT_L, DT_MULTI};
+use super::popup_geometry::{close_rect, place, Origin as PopupOrigin, Placement, WorkArea, HEIGHT_DIP, WIDTH_DIP};
 use super::theme::{self, Palette};
 use super::theme_visuals::paint_motif;
 use crate::model::{app_label, Filter, History, Item, Kind, Origin};
 use crate::settings::Theme;
 use crate::util::{self, wide};
-
-pub const WIDTH_DIP: f32 = 360.0;
-pub const HEIGHT_DIP: f32 = 520.0;
 
 const GLYPH_SEARCH: &str = "\u{E721}";
 const GLYPH_PIN: &str = "\u{E718}";
@@ -32,7 +30,6 @@ const GLYPH_PHONE: &str = "\u{E8EA}";
 const GLYPH_FOLDER: &str = "\u{E8B7}";
 const GLYPH_PAUSE: &str = "\u{E769}";
 const GLYPH_PINNED: &str = "\u{E840}";
-const GLYPH_CLOSE: &str = "\u{E711}";
 const GLYPH_CLIPBOARD: &str = "\u{E77F}";
 
 /// The tab row: recently used, emoji, kaomoji, symbols and the clipboard history.
@@ -237,6 +234,16 @@ pub fn register_class(proc_: wm::WNDPROC) -> Vec<u16> {
     class
 }
 
+fn monitor_work_area(monitor: HMONITOR) -> Option<WorkArea> {
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+        return None;
+    }
+    let RECT { left, top, right, bottom } = info.rcWork;
+    (right > left && bottom > top).then_some(WorkArea { left, top, right, bottom })
+}
+
 impl Popup {
     pub fn create(class: &[u16], theme: Theme) -> Popup {
         let hwnd = unsafe {
@@ -316,7 +323,7 @@ impl Popup {
     }
 
     fn set_scale(&mut self, scale: f32) {
-        if (scale - self.scale).abs() > 0.001 {
+        if scale != self.scale {
             self.fonts.release();
             self.scale = scale;
             self.fonts = Fonts::new(scale);
@@ -333,25 +340,14 @@ impl Popup {
     pub fn show(&mut self, anchor: POINT, below: i32, from_tray: bool, ctx: &Context) {
         let monitor = unsafe { MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST) };
         let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
-        unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) };
-        self.set_scale(dpi_x as f32 / 96.0);
+        if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) } < 0 || dpi_x == 0 {
+            dpi_x = 96;
+        }
+        let Some(work) = monitor_work_area(monitor) else { return };
+        let origin = if from_tray { PopupOrigin::Tray } else { PopupOrigin::Caret { x: anchor.x, y: anchor.y, below } };
+        let Placement { x, y, w, h, scale } = place(work, dpi_x as f32 / 96.0, origin);
+        self.set_scale(scale);
         self.palette = theme::palette(self.theme);
-        let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        unsafe { GetMonitorInfoW(monitor, &mut info) };
-        let work = info.rcWork;
-        let (w, h) = (self.width(), self.height().min(work.bottom - work.top));
-        let margin = self.px(8.0);
-        let (x, y) = if from_tray {
-            (work.right - w - margin, work.bottom - h - margin)
-        } else {
-            let mut y = anchor.y + below + margin / 2;
-            if y + h > work.bottom {
-                // Not enough room below the caret: open above it.
-                y = (anchor.y - h - margin / 2).max(work.top);
-            }
-            (anchor.x.clamp(work.left + margin, (work.right - w - margin).max(work.left)), y)
-        };
 
         self.query.clear();
         self.caret = 0;
@@ -406,27 +402,38 @@ impl Popup {
         self.invalidate();
     }
 
+    pub fn keep_in_work_area(&mut self, ctx: &Context) {
+        if !self.visible {
+            return;
+        }
+        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if unsafe { wm::GetWindowRect(self.hwnd, &mut rect) } != 0 {
+            let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+            self.on_dpi_changed(dpi, &rect, ctx);
+        }
+    }
+
     pub fn on_dpi_changed(&mut self, dpi: u32, suggested: &RECT, ctx: &Context) {
-        self.set_scale(dpi as f32 / 96.0);
+        if dpi == 0 {
+            return;
+        }
+        let monitor = unsafe { MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST) };
+        let Some(work) = monitor_work_area(monitor) else { return };
+        let origin = PopupOrigin::Window { x: suggested.left, y: suggested.top };
+        let Placement { x, y, w, h, scale } = place(work, dpi as f32 / 96.0, origin);
+        self.set_scale(scale);
         unsafe {
-            wm::SetWindowPos(
-                self.hwnd,
-                std::ptr::null_mut(),
-                suggested.left,
-                suggested.top,
-                suggested.right - suggested.left,
-                suggested.bottom - suggested.top,
-                wm::SWP_NOZORDER | wm::SWP_NOACTIVATE,
-            );
+            wm::SetWindowPos(self.hwnd, std::ptr::null_mut(), x, y, w, h, wm::SWP_NOZORDER | wm::SWP_NOACTIVATE);
         }
         self.rebuild(ctx);
+        self.clamp_scroll_for(self.viewport(ctx));
         self.invalidate();
     }
 
     // ------------------------------------------------------------------ layout
 
     fn close_rect(&self) -> (i32, i32, i32, i32) {
-        (self.width() - self.px(8.0 + 32.0), self.px(4.0), self.px(32.0), self.px(28.0))
+        close_rect(self.width(), self.scale)
     }
     fn settings_rect(&self) -> (i32, i32, i32, i32) {
         (self.width() - self.px(8.0 + 32.0 + 2.0 + 32.0), self.px(4.0), self.px(32.0), self.px(28.0))
@@ -1303,7 +1310,7 @@ impl Popup {
         header_button(c, settings_r, self.hover == Hit::Settings);
         c.text(self.fonts.icon_small, GLYPH_SETTINGS, settings_r, p.text, DT_C);
         header_button(c, close_r, self.hover == Hit::Close);
-        c.text(self.fonts.icon_small, GLYPH_CLOSE, close_r, p.text, DT_C);
+        c.close_mark(close_r, self.scale, p.text);
 
         // Tab row: recently used, emoji, kaomoji, symbols, clipboard.
         for (i, (r, (label, glyph))) in tabs.iter().zip(TABS).enumerate() {

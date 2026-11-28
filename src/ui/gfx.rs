@@ -286,6 +286,29 @@ impl Canvas {
         }
     }
 
+    /// Draw the close mark without depending on a private-use icon font glyph.
+    pub fn close_mark(&mut self, (x, y, w, h): (i32, i32, i32, i32), scale: f32, color: Color) {
+        self.flush();
+        if self.px.is_null() {
+            return;
+        }
+        let cx = x as f32 + w as f32 / 2.0;
+        let cy = y as f32 + h as f32 / 2.0;
+        let half = 5.5 * scale;
+        let stroke = (0.8 * scale).max(0.65);
+        let reach = half + stroke + 1.0;
+        for yy in (cy - reach).floor() as i32..(cy + reach).ceil() as i32 {
+            for xx in (cx - reach).floor() as i32..(cx + reach).ceil() as i32 {
+                let dx = (xx as f32 + 0.5 - cx).abs();
+                let dy = (yy as f32 + 0.5 - cy).abs();
+                let cross = (dx - dy).abs() * std::f32::consts::FRAC_1_SQRT_2;
+                let end = (dx + dy - 2.0 * half).max(0.0) * std::f32::consts::FRAC_1_SQRT_2;
+                let alpha = (stroke + 0.5 - cross.hypot(end)).clamp(0.0, 1.0);
+                self.blend_px(xx, yy, color, alpha);
+            }
+        }
+    }
+
     pub fn text(&self, font: HFONT, s: &str, rc: (i32, i32, i32, i32), c: Color, flags: u32) {
         if s.is_empty() || rc.2 <= 0 || rc.3 <= 0 {
             return;
