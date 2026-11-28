@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+- Keep the clipboard history flyout, including its close button, inside the current monitor’s usable area when opening it, dragging it or changing display scaling.
+- Draw the close icon without depending on the system icon font. Closing the flyout leaves clipboard history running and ready to reopen.
+- Recognize application clipboard writes after Windows commits them.
+
 ## 0.1.6
 
 - Read screenshots in the clipboard owner's format order, so a ready bitmap can be captured without waiting for a secondary PNG.
