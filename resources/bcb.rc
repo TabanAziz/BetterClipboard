@@ -6,8 +6,8 @@
 1 RT_MANIFEST "bcb.manifest"
 
 1 VERSIONINFO
- PRODUCTVERSION 0,1,6,0
- FILEVERSION 0,1,6,0
+ PRODUCTVERSION 0,1,7,0
+ FILEVERSION 0,1,7,0
  FILEOS 0x40004L
  FILETYPE 0x1L
 BEGIN
@@ -23,8 +23,8 @@ BEGIN
       VALUE "FileDescription", "BetterClipboard"
       VALUE "InternalName", "BetterClipboard"
       VALUE "OriginalFilename", "BetterClipboard.exe"
-      VALUE "ProductVersion", "0.1.6"
-      VALUE "FileVersion", "0.1.6"
+      VALUE "ProductVersion", "0.1.7"
+      VALUE "FileVersion", "0.1.7"
       VALUE "CompanyName", "TabanAziz"
       VALUE "LegalCopyright", "MIT License"
     END
