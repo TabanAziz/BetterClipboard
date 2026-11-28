@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check:
@@ -22,9 +23,11 @@ jobs:
         run: cargo test --release --locked
       - name: System clipboard tests
         run: cargo test --release --locked --test system_clipboard -- --ignored --test-threads=1
-      - name: Release build
-        run: cargo build --release --locked
+      - name: Package Setup and portable ZIP
+        shell: powershell
+        run: ./tools/release.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: BetterClipboard
-          path: target/release/BetterClipboard.exe
+          path: dist/
+          if-no-files-found: error
